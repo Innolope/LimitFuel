@@ -68,7 +68,7 @@ Claude mark 45%   OpenAI mark 82%  (only connected providers appear)
 
 ```
 app/        - macOS menu bar application (Swift/SwiftUI)
-website/    - Landing page (HTML/CSS)
+website/    - fork-latest.json, the update feed the app reads
 ```
 
 ## Build from Source
@@ -116,7 +116,7 @@ as unavailable; Codex supports multiple metered buckets and actual window length
 - `app/LimitFuel.swift` - Main application code
 - `app/build.sh` - Build script
 - `app/create_dmg.sh` - DMG installer creation
-- `website/index.html` - Landing page
+- `website/fork-latest.json` - Update feed read by the app
 
 ### Key Technologies
 
