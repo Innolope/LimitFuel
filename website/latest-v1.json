@@ -1,12 +1,1 @@
-{
-  "version": "1.3.4",
-  "title": "New: see your free limit resets",
-  "description": "The app now shows the free usage-limit resets Claude gives you, and until when you can use them.",
-  "buttons": [
-    {
-      "label": "Download latest",
-      "url": "https://github.com/Artzainnn/ClaudeUsageBar/releases/latest/download/ClaudeUsageBar-Installer.dmg",
-      "style": "primary"
-    }
-  ]
-}
+{}

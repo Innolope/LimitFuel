@@ -1,0 +1,19 @@
+name: macOS checks
+on:
+  pull_request:
+  push:
+    branches: [main, 'feat/**']
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint and metadata
+        run: ./Tests/lint.sh
+      - name: Acceptance tests
+        run: ./Tests/run.sh
+      - name: Universal local build
+        working-directory: app
+        run: ./build.sh --local

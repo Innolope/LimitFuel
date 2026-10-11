@@ -11,27 +11,27 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest">
   <link rel="canonical" href="https://claudeusagebar.com/">
-  <title>ClaudeUsageBar – Free Claude & Claude Code Usage Tracker for macOS</title>
-  <meta name="description" content="Free, open-source macOS menu bar app that tracks your Claude and Claude Code usage limits in real time. Get notifications before hitting your limit. Lightweight, private, and native.">
+  <title>LimitFuel – Free Claude & Codex Usage Tracker for macOS</title>
+  <meta name="description" content="Free, open-source macOS menu bar app that tracks your Claude, Claude Code and Codex usage limits in real time. Get notifications before hitting your limit. Lightweight, private, and native.">
   <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://claudeusagebar.com/">
-  <meta property="og:title" content="ClaudeUsageBar – Free Claude & Claude Code Usage Tracker for macOS">
-  <meta property="og:description" content="Free, open-source macOS menu bar app that tracks your Claude and Claude Code usage limits in real time. Get notifications before hitting your limit. Lightweight, private, and native.">
+  <meta property="og:title" content="LimitFuel – Free Claude & Codex Usage Tracker for macOS">
+  <meta property="og:description" content="Free, open-source macOS menu bar app that tracks your Claude, Claude Code and Codex usage limits in real time. Get notifications before hitting your limit. Lightweight, private, and native.">
   <meta property="og:image" content="https://claudeusagebar.com/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="ClaudeUsageBar - Track your Claude AI usage from the macOS menu bar">
+  <meta property="og:image:alt" content="LimitFuel - Track your Claude AI usage from the macOS menu bar">
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@buildingitmyway">
   <meta name="twitter:creator" content="@buildingitmyway">
-  <meta name="twitter:title" content="ClaudeUsageBar – Free Claude & Claude Code Usage Tracker for macOS">
-  <meta name="twitter:description" content="Free, open-source macOS menu bar app that tracks your Claude and Claude Code usage limits in real time. Get notifications before hitting your limit.">
+  <meta name="twitter:title" content="LimitFuel – Free Claude & Codex Usage Tracker for macOS">
+  <meta name="twitter:description" content="Free, open-source macOS menu bar app that tracks your Claude, Claude Code and Codex usage limits in real time. Get notifications before hitting your limit.">
   <meta name="twitter:image" content="https://claudeusagebar.com/og-image.png">
   <meta name="twitter:image:width" content="1200">
   <meta name="twitter:image:height" content="630">
-  <meta name="twitter:image:alt" content="ClaudeUsageBar - Track your Claude AI usage from the macOS menu bar">
+  <meta name="twitter:image:alt" content="LimitFuel - Track your Claude AI usage from the macOS menu bar">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -363,7 +363,7 @@
       height: 22px;
     }
 
-    /* Homebrew one-liner under the download buttons */
+    /* Source instructions below the build buttons */
     .brew-line {
       display: flex;
       flex-direction: column;
@@ -862,27 +862,6 @@
       fill: currentColor;
     }
 
-    .coffee-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--claude-orange);
-      text-decoration: none;
-      font-size: 15px;
-      font-weight: 500;
-      padding: 10px 20px;
-      background: rgba(218, 119, 86, 0.1);
-      border: 1px solid rgba(218, 119, 86, 0.2);
-      border-radius: 10px;
-      transition: all 0.3s;
-    }
-
-    .coffee-link:hover {
-      background: rgba(218, 119, 86, 0.15);
-      border-color: rgba(218, 119, 86, 0.3);
-      transform: translateY(-2px);
-    }
-
     /* Other Products */
     .other-products {
       position: relative;
@@ -1183,13 +1162,13 @@
             <path d="M8 1L9 6L13 3L10 7L15 8L10 9L13 13L9 10L8 15L7 10L3 13L6 9L1 8L6 7L3 3L7 6L8 1Z" fill="white"/>
           </svg>
         </div>
-        <span class="logo-text">ClaudeUsageBar</span>
+        <span class="logo-text">LimitFuel</span>
       </a>
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#faq">FAQ</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar" target="_blank">GitHub</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar/releases/latest/download/ClaudeUsageBar-Installer.dmg" class="nav-cta" data-fast-goal="download_macos"><svg class="download-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="margin-right:6px;vertical-align:-2px;"><path d="M8 11.5L4 7.5l1.4-1.4L7 7.7V1h2v6.7l1.6-1.6L12 7.5l-4 4zM2 13h12v2H2v-2z"/></svg>Download</a>
+        <a href="https://github.com/innolope-dev/LimitFuel" target="_blank">GitHub</a>
+        <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="nav-cta" data-fast-goal="download_macos"><svg class="download-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="margin-right:6px;vertical-align:-2px;"><path d="M8 11.5L4 7.5l1.4-1.4L7 7.7V1h2v6.7l1.6-1.6L12 7.5l-4 4zM2 13h12v2H2v-2z"/></svg>Build</a>
         <a href="/status" class="nav-status-pill loading" data-nav-status><span class="nav-status-dot loading" data-nav-status></span><span>Claude Status</span></a>
       </div>
       <button class="mobile-menu-toggle" onclick="document.getElementById('mobileMenu').classList.toggle('active')">
@@ -1205,13 +1184,12 @@
     <a href="/status" onclick="document.getElementById('mobileMenu').classList.remove('active')">Status</a>
     <a href="#features" onclick="document.getElementById('mobileMenu').classList.remove('active')">Features</a>
     <a href="#faq" onclick="document.getElementById('mobileMenu').classList.remove('active')">FAQ</a>
-    <a href="https://github.com/Artzainnn/ClaudeUsageBar" target="_blank" data-fast-goal="view_github">GitHub</a>
+    <a href="https://github.com/innolope-dev/LimitFuel" target="_blank" data-fast-goal="view_github">GitHub</a>
     <a href="https://x.com/buildingitmyway" target="_blank" data-fast-goal="click_twitter">
       <svg style="width: 16px; height: 16px; vertical-align: middle; margin-right: 6px; fill: currentColor;" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
       Twitter
     </a>
-    <a href="https://donate.stripe.com/3cIcN5b5H7Q8ay8bIDfIs02" target="_blank" data-fast-goal="buy_coffee">☕ Buy Dev a Coffee</a>
-    <a href="https://github.com/Artzainnn/ClaudeUsageBar/releases/latest/download/ClaudeUsageBar-Installer.dmg" class="mobile-cta" data-fast-goal="download_macos">Download for macOS</a>
+    <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="mobile-cta" data-fast-goal="download_macos">Build for macOS</a>
   </div>
 
   <section class="hero">
@@ -1230,20 +1208,20 @@
       </div>
     </div>
 
-    <h1>Track Your <span>Claude Code</span> Usage</h1>
-    <p class="hero-subtitle">A minimal macOS menu bar app that tracks your Claude and Claude Code usage limits at a glance. Never hit your rate limit unexpectedly again.</p>
+    <h1>Track Your <span>Claude &amp; Codex</span> Usage</h1>
+    <p class="hero-subtitle">A minimal macOS menu bar app that tracks your Claude, Claude Code and Codex usage limits at a glance. Never hit your rate limit unexpectedly again.</p>
 
     <div class="hero-cta">
       <div class="hero-buttons">
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar/releases/latest/download/ClaudeUsageBar-Installer.dmg" class="download-btn" data-fast-goal="download_macos">
+        <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="download-btn" data-fast-goal="download_macos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Download for macOS
+          Build for macOS
         </a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar" target="_blank" class="github-btn" data-fast-goal="view_github">
+        <a href="https://github.com/innolope-dev/LimitFuel" target="_blank" class="github-btn" data-fast-goal="view_github">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
           </svg>
@@ -1255,23 +1233,8 @@
         </a>
       </div>
 
-      <div class="brew-line">
-        <span class="brew-line-label">or install with Homebrew</span>
-        <code class="brew-cmd" id="brewCmd" title="Click to copy" data-fast-goal="copy_brew">brew tap Artzainnn/tap &amp;&amp; brew install --cask claudeusagebar
-          <svg class="brew-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </code>
-      </div>
-      <script>
-        document.getElementById('brewCmd').addEventListener('click', function () {
-          navigator.clipboard.writeText('brew tap Artzainnn/tap && brew install --cask claudeusagebar').then(() => {
-            this.classList.add('copied');
-            const label = document.querySelector('.brew-line-label');
-            const prev = label.textContent;
-            label.textContent = 'copied to clipboard ✓';
-            setTimeout(() => { this.classList.remove('copied'); label.textContent = prev; }, 1600);
-          });
-        });
-      </script>
+      <p class="brew-line-label">Build LimitFuel locally using the source instructions above.
+        A notarized installer has not been published.</p>
       <div class="download-meta">
         <span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1296,9 +1259,6 @@
           Lightweight
         </span>
       </div>
-      <a href="https://www.producthunt.com/products/claudeusagebar?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-claudeusagebar" target="_blank" rel="noopener noreferrer" style="display: inline-block; margin-top: 24px;">
-        <img src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1067826&amp;theme=dark&amp;period=daily&amp;t=1769934818885" alt="ClaudeUsageBar - #1 Product of the Day on Product Hunt" width="250" height="54" />
-      </a>
     </div>
   </section>
 
@@ -1389,14 +1349,7 @@
         <a href="javascript:void(0)" onclick="refreshUsage()" style="color: var(--text-muted); font-size: 14px; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='var(--claude-orange)'" onmouseout="this.style.color='var(--text-muted)'">Click to see it in action</a>
       </div>
 
-      <a href="https://codexusagebar.com?utm_source=claudeusagebar&utm_medium=website&utm_campaign=cross_promo" target="_blank" class="twin-card" data-fast-goal="cross_promo">
-        <img src="https://codexusagebar.com/apple-touch-icon.png" alt="CodexUsageBar logo">
-        <div>
-          <div class="twin-card-title">Using Codex too?</div>
-          <div class="twin-card-desc">Get CodexUsageBar for your ChatGPT Codex limits</div>
-        </div>
-        <span class="twin-card-arrow">&rarr;</span>
-      </a>
+      <div class="twin-card"><div><div class="twin-card-title">Codex is included</div><div class="twin-card-desc">Select Codex in LimitFuel to track your ChatGPT plan limits.</div></div></div>
     </div>
   </section>
 
@@ -1484,100 +1437,48 @@
 
     <div class="faq-grid">
       <div class="faq-item">
-        <div class="faq-question">How does ClaudeUsageBar get my usage data?</div>
-        <div class="faq-answer">ClaudeUsageBar uses your session cookie from claude.ai to fetch your usage data directly from Anthropic's API. Your cookie is stored locally on your machine and is never sent anywhere else.</div>
+        <div class="faq-question">How does LimitFuel get my usage data?</div>
+        <div class="faq-answer">LimitFuel uses your session cookie from claude.ai to fetch your usage data directly from Anthropic's API. Your cookie is stored locally on your machine and is never sent anywhere else.</div>
       </div>
 
       <div class="faq-item">
         <div class="faq-question">Is my data safe?</div>
-        <div class="faq-answer">Yes. Your session cookie and usage data never leave your computer. There's no analytics, no telemetry, and no data collection of any kind. ClaudeUsageBar is fully open source, so you can inspect every line of code.</div>
+        <div class="faq-answer">Yes. Your session cookie and usage data never leave your computer. There's no analytics, no telemetry, and no data collection of any kind. LimitFuel is fully open source, so you can inspect every line of code.</div>
       </div>
 
       <div class="faq-item">
         <div class="faq-question">How do I get my session cookie?</div>
-        <div class="faq-answer">Go to <a href="https://claude.ai/settings/usage" target="_blank">claude.ai/settings/usage</a>, open Developer Tools (Cmd+Option+I), go to the Network tab, refresh the page, click the "usage" request, and copy the full "Cookie" value from the Request Headers.</div>
+        <div class="faq-answer">Sign in to Claude in Google Chrome, then click "Detect Chrome Session" in the app. Cookies recheck hourly and usage refreshes every minute. A manual cookie option remains available.</div>
       </div>
 
       <div class="faq-item">
-        <div class="faq-question">Why do I need to grant Accessibility permissions?</div>
-        <div class="faq-answer">Accessibility permissions are only needed if you want to use the Cmd+U keyboard shortcut to open the popup from anywhere. The app works fine without it – you just won't have the global shortcut.</div>
+        <div class="faq-question">Does the keyboard shortcut need extra permissions?</div>
+        <div class="faq-answer">No. Cmd+U uses the macOS global hotkey API without an Accessibility request. Disable it in Settings if it conflicts with another app.</div>
       </div>
 
       <div class="faq-item">
         <div class="faq-question">Does it work with Claude Free and Pro plans?</div>
-        <div class="faq-answer">Yes! ClaudeUsageBar works with both Free and Pro plans. Pro users will also see their weekly Sonnet usage if available.</div>
+        <div class="faq-answer">Yes! LimitFuel works with both Free and Pro plans. Pro users will also see their weekly Sonnet usage if available.</div>
       </div>
 
       <div class="faq-item">
         <div class="faq-question">The app shows "Session cookie not set" – what do I do?</div>
-        <div class="faq-answer">Click on the menu bar icon, then click "Set Session Cookie" and paste your full cookie string from claude.ai. Make sure you're copying the entire cookie value, not just the sessionKey part.</div>
+        <div class="faq-answer">Click "Open Claude in Chrome", sign in, then click "Detect Chrome Session". Choose a profile if several are signed in. Use "Use a Manual Cookie" if Chrome storage cannot be read.</div>
       </div>
     </div>
   </section>
 
-  <section class="other-products">
-    <div class="other-products-header">
-      <h2><svg style="width:24px;height:24px;vertical-align:-3px;margin-right:8px;" viewBox="0 0 24 24" fill="none" stroke="var(--claude-orange)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Like ClaudeUsageBar? Check out my other products!</h2>
-    </div>
-    <div class="products-grid">
-      <a href="https://mediaboost.press?utm_source=claudeusagebar&utm_medium=website&utm_campaign=cross_promo" target="_blank" class="product-card">
-        <div class="product-icon">
-          <svg width="44" height="44" viewBox="0 0 40 41" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect y="0.5" width="40" height="40" rx="20" fill="url(#mb_grad)"/>
-            <path d="M10.5366 12.0455H15.0877L19.8945 23.7727H20.0991L24.9059 12.0455H29.457V29.5H25.8775V18.1392H25.7326L21.2156 29.4148H18.7781L14.261 18.0966H14.1161V29.5H10.5366V12.0455Z" fill="white"/>
-            <defs>
-              <linearGradient id="mb_grad" x1="0" y1="20.5" x2="40" y2="20.5" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#37B6FF"/>
-                <stop offset="0.524" stop-color="#6282FE"/>
-                <stop offset="1" stop-color="#8A52FD"/>
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-        <div class="product-info">
-          <span class="product-name">Mediaboost</span>
-          <span class="product-desc">Instantly boost AIO, SEO, Social Proof</span>
-        </div>
-      </a>
-      <a href="https://thelabscompany.com/?utm_source=claudeusagebar&utm_medium=website&utm_campaign=cross_promo" target="_blank" class="product-card" data-fast-goal="labs_card">
-        <div class="product-icon">
-          <img src="/labs-logo.png" width="44" height="44" alt=".labs logo">
-        </div>
-        <div class="product-info">
-          <span class="product-name">.labs <span class="product-tag">Waitlist</span></span>
-          <span class="product-desc">Get yourname.labs, the new domain for builders.</span>
-        </div>
-      </a>
-    </div>
-  </section>
-
-  <section class="creator">
-    <div class="creator-content">
-      <span class="creator-label">Made with love by</span>
-      <a href="https://buildingitmyway.com?utm_source=claudeusagebar&utm_medium=website&utm_campaign=cross_promo" target="_blank" class="creator-link" data-fast-goal="click_bimw">
-        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="Building It My Way logo">
-          <rect width="100" height="100" rx="22" fill="#0a0a0b"/>
-          <text x="26" y="75" font-family="Arial Black, Arial Narrow, Arial, sans-serif" font-weight="900" font-size="78" fill="#f7f6f3">B</text>
-          <circle cx="80" cy="69" r="9" fill="#ff5c35"/>
-        </svg>
-        Maxime B.
-      </a>
-      <a href="https://donate.stripe.com/3cIcN5b5H7Q8ay8bIDfIs02" target="_blank" class="coffee-link" data-fast-goal="buy_coffee">
-        <span>☕</span>
-        Buy Dev a Coffee
-      </a>
-    </div>
-  </section>
+  <section class="creator"><div class="creator-content"><span class="creator-label">LimitFuel is a fork of <a href="https://github.com/Artzainnn/ClaudeUsageBar">ClaudeUsageBar by Artzainnn</a>.</span></div></section>
 
   <footer><div class="footer-content">
-      <p class="footer-text">Built with care for the Claude & Claude Code community</p>
+      <p class="footer-text">Built for the Claude and Codex community</p>
       <div class="footer-links">
         <a href="/status" class="footer-status-pill loading" data-nav-status><span class="footer-status-dot loading" data-nav-status></span><span>Claude Status</span></a>
         <a href="/blog/">Blog</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar" target="_blank">GitHub</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar#-features" target="_blank">Privacy</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar/blob/main/LICENSE" target="_blank">License</a>
-        <a href="https://github.com/Artzainnn/ClaudeUsageBar/releases/latest/download/ClaudeUsageBar-Installer.dmg" class="footer-cta-link" data-fast-goal="download_macos">Free download</a>
+        <a href="https://github.com/innolope-dev/LimitFuel" target="_blank">GitHub</a>
+        <a href="https://github.com/innolope-dev/LimitFuel#-features" target="_blank">Privacy</a>
+        <a href="https://github.com/innolope-dev/LimitFuel/blob/main/LICENSE" target="_blank">License</a>
+        <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="footer-cta-link" data-fast-goal="download_macos">Build from source</a>
       </div>
     </div>
   </footer>
@@ -1656,7 +1557,7 @@
 
     // Fetch GitHub star count
     function fetchStarCount() {
-      fetch('https://api.github.com/repos/Artzainnn/ClaudeUsageBar')
+      fetch('https://api.github.com/repos/innolope-dev/LimitFuel')
         .then(r => r.json())
         .then(data => {
           if (data.stargazers_count !== undefined) {

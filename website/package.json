@@ -1,5 +1,5 @@
 {
-  "name": "claudeusagebar-site",
+  "name": "limitfuel-site",
   "private": true,
   "dependencies": {
     "@datafast/ai-crawl": "^1.0.9"

@@ -1,6 +1,6 @@
-# ClaudeUsageBar Website
+# LimitFuel Website
 
-Landing page for ClaudeUsageBar macOS app.
+Landing page for LimitFuel macOS app.
 
 ## Structure
 
@@ -11,19 +11,10 @@ website/
 
 ## Deployment
 
-### GitHub Pages
-
-This website can be deployed to GitHub Pages:
-
-1. Go to repository Settings → Pages
-2. Source: Deploy from branch
-3. Branch: `main`
-4. Folder: `/website`
-5. Save
-
-Your site will be available at: `https://Artzainnn.github.io/claudeusagebar/`
-
-**Note:** This project uses a custom domain: `claudeusagebar.com` configured via Vercel.
+No LimitFuel website has been deployed. The inherited canonical URLs, sitemap,
+social images and domain configuration refer to the upstream claudeusagebar.com
+site. Configure a domain you own before publishing. Download links point to this
+fork's build instructions until a signed release exists.
 
 ### Local Development
 
@@ -47,7 +38,6 @@ python3 -m http.server 8000
 - Responsive design
 - Dark theme
 - Inter font from Google Fonts
-- Stripe donation integration
 
 ## Features
 

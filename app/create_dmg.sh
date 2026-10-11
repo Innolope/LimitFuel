@@ -1,6 +1,6 @@
 #!/bin/bash
 
-APP_NAME="ClaudeUsageBar"
+APP_NAME="LimitFuel"
 DMG_NAME="${APP_NAME}-Installer"
 VERSION="1.1"
 

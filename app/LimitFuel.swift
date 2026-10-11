@@ -40,6 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var usageManager: UsageManager!
     var statusManager: StatusManager!
     var updateManager: UpdateManager!
+    var codexManager: CodexUsageManager!
+    private var claudePollTimer: Timer?
+    private var codexPollTimer: Timer?
     var eventMonitor: Any?
     var hotKeyRef: EventHotKeyRef?
 
@@ -66,6 +69,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         usageManager = UsageManager(statusItem: statusItem, delegate: self)
         statusManager = StatusManager()
         updateManager = UpdateManager()
+        codexManager = CodexUsageManager()
+        codexManager.onChange = { [weak self] in
+            self?.updateSelectedProviderIcon()
+            self?.scheduleCodexPoll()
+        }
 
         // Create popover
         popover = NSPopover()
@@ -75,7 +83,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: UsageView(
             usageManager: usageManager,
             statusManager: statusManager,
-            updateManager: updateManager
+            updateManager: updateManager,
+            codexManager: codexManager
         ))
 
         // Appearance preference: "system" (default) tracks the macOS light/dark
@@ -98,22 +107,71 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Fetch initial data
         usageManager.fetchUsage()
+        usageManager.detectChromeSession()
+        codexManager.fetchUsage()
         statusManager.fetch()
         updateManager.fetch()
 
-        // Usage + Anthropic status are time-sensitive — poll every 5 min.
-        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
-            self.usageManager.fetchUsage()
+        scheduleClaudePoll()
+        scheduleCodexPoll()
+        // Provider usage has independent adaptive timers. Status remains once a minute.
+        Timer.scheduledTimer(withTimeInterval: RefreshSchedule.usageInterval, repeats: true) { _ in
             self.statusManager.fetch()
         }
 
         // App updates are infrequent (new release at most weekly) — poll every 3 hours.
-        Timer.scheduledTimer(withTimeInterval: 3 * 3600, repeats: true) { _ in
+        Timer.scheduledTimer(withTimeInterval: RefreshSchedule.updateInterval, repeats: true) { _ in
             self.updateManager.fetch()
+        }
+
+        Timer.scheduledTimer(withTimeInterval: RefreshSchedule.cookieInterval, repeats: true) { _ in
+            self.usageManager.detectChromeSession()
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.usageManager.detectChromeSessionIfDue()
+            self?.usageManager.fetchUsage()
+            self?.codexManager.fetchUsage()
         }
 
         // Set up Cmd+U keyboard shortcut
         setupKeyboardShortcut()
+    }
+
+    func scheduleClaudePoll() {
+        claudePollTimer?.invalidate()
+        let interval = RefreshSchedule.pollingInterval(usedPercent: usageManager.hasFetchedData ? usageManager.sessionUtilization : nil,
+            windowDurationMins: 300, resetsAt: usageManager.sessionResetsAt)
+        let delay = RefreshSchedule.nextPollDelay(interval: interval, lastStartedAt: usageManager.lastFetchStartedAt)
+        claudePollTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.usageManager.fetchUsage()
+            self?.scheduleClaudePoll()
+        }
+    }
+
+    func scheduleCodexPoll() {
+        codexPollTimer?.invalidate()
+        let windows = codexManager.snapshot?.buckets.flatMap { [$0.primary, $0.secondary].compactMap { $0 } } ?? []
+        let interval = windows.map {
+            RefreshSchedule.pollingInterval(usedPercent: $0.usedPercent, windowDurationMins: $0.windowDurationMins, resetsAt: $0.resetsAt)
+        }.min() ?? RefreshSchedule.usageInterval
+        let delay = RefreshSchedule.nextPollDelay(interval: interval, lastStartedAt: codexManager.lastFetchStartedAt)
+        codexPollTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.codexManager.fetchUsage()
+            self?.scheduleCodexPoll()
+        }
+    }
+
+    func updateSelectedProviderIcon() {
+        if UserDefaults.standard.string(forKey: "usage_provider") == "codex" {
+            let bucket = codexManager?.snapshot?.buckets.first(where: { $0.id == "codex" }) ?? codexManager?.snapshot?.buckets.first
+            let percent = (bucket?.primary ?? bucket?.secondary)?.usedPercent
+            updateStatusIcon(percentage: Int(min(100, max(0, percent ?? 0))))
+            statusItem?.button?.title = percent.map { String(format: " Codex %.0f%%", $0) } ?? " Codex —"
+        } else {
+            updateStatusIcon(percentage: usageManager?.sessionUsage ?? 0)
+        }
     }
 
     func applyAppearancePreference() {
@@ -137,9 +195,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setupKeyboardShortcut() {
-        // Check Accessibility permissions
-        checkAccessibilityPermissions()
-
         // Only register if user has the shortcut enabled
         if usageManager.shortcutEnabled {
             registerGlobalHotKey()
@@ -151,32 +206,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             registerGlobalHotKey()
         } else {
             unregisterGlobalHotKey()
-        }
-    }
-
-    func checkAccessibilityPermissions() {
-        // Check if app has Accessibility permissions
-        let trusted = AXIsProcessTrusted()
-
-        if !trusted {
-            NSLog("⚠️ Accessibility permissions not granted")
-            // Show alert to guide user
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                let alert = NSAlert()
-                alert.messageText = "Accessibility Permission Required"
-                alert.informativeText = "ClaudeUsageBar needs Accessibility permission to use the Cmd+U keyboard shortcut.\n\nPlease enable it in:\nSystem Settings → Privacy & Security → Accessibility"
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "Open System Settings")
-                alert.addButton(withTitle: "Skip for Now")
-
-                let response = alert.runModal()
-                if response == .alertFirstButtonReturn {
-                    // Open System Settings
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                }
-            }
-        } else {
-            NSLog("✅ Accessibility permissions granted")
         }
     }
 
@@ -235,6 +264,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        claudePollTimer?.invalidate()
+        codexPollTimer?.invalidate()
         unregisterGlobalHotKey()
     }
 
@@ -260,7 +291,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             toggleItem.keyEquivalentModifierMask = .command
             menu.addItem(toggleItem)
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "Quit ClaudeUsageBar", action: #selector(quitApp), keyEquivalent: "q"))
+            menu.addItem(NSMenuItem(title: "Quit LimitFuel", action: #selector(quitApp), keyEquivalent: "q"))
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
@@ -369,6 +400,7 @@ extension NSColor {
 }
 
 // Main entry point
+#if !ACCEPTANCE_TESTS
 @main
 struct Main {
     static func main() {
@@ -379,9 +411,11 @@ struct Main {
         app.run()
     }
 }
+#endif
 
 class UsageManager: ObservableObject {
     @Published var sessionUsage: Int = 0
+    @Published var sessionUtilization: Double = 0
     @Published var sessionLimit: Int = 100
     @Published var weeklyUsage: Int = 0
     @Published var weeklyLimit: Int = 100
@@ -413,77 +447,181 @@ class UsageManager: ObservableObject {
     @Published var hasWeeklySonnet: Bool = false
     @Published var hasWeeklyFable: Bool = false
     @Published var hasFetchedData: Bool = false
-    @Published var isAccessibilityEnabled: Bool = false
     @Published var shortcutEnabled: Bool = true
+    @Published var isDetectingChrome = false
+    @Published var chromeMessage: String?
+    @Published var chromeProfiles: [ChromeProfile] = []
+    @Published var chromeProfileName: String?
+    @Published var lastChromeCheck: Date?
+    @Published var chromeDetectionEnabled = true
+    private(set) var lastFetchStartedAt: Date?
 
     private var statusItem: NSStatusItem?
     private var sessionCookie: String = ""
     private weak var delegate: AppDelegate?
     private var lastNotifiedThreshold: Int = 0
+    private let defaults: UserDefaults
+    private let chromeReader: ChromeCookieReader
+    private var connectionRevision = UUID()
+    private let chromeQueue = DispatchQueue(label: "com.claude.usagebar.chrome", qos: .userInitiated)
+    private var activeRequests: [UUID: URLSessionDataTask] = [:]
+    private lazy var apiSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 20
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        return URLSession(configuration: config, delegate: ClaudeSessionDelegate(), delegateQueue: nil)
+    }()
 
-    init(statusItem: NSStatusItem?, delegate: AppDelegate? = nil) {
+    init(statusItem: NSStatusItem?, delegate: AppDelegate? = nil,
+         defaults: UserDefaults = .standard, chromeReader: ChromeCookieReader = ChromeCookieReader(),
+         apiSession: URLSession? = nil) {
+        self.defaults = defaults
+        self.chromeReader = chromeReader
         self.statusItem = statusItem
         self.delegate = delegate
+        if let session = apiSession { self.apiSession = session }
+        chromeDetectionEnabled = defaults.object(forKey: "chrome_detection_enabled") as? Bool
+            ?? (defaults.string(forKey: "claude_session_cookie") == nil)
         loadSessionCookie()
         loadSettings()
-        checkAccessibilityStatus()
     }
 
-    func checkAccessibilityStatus() {
-        isAccessibilityEnabled = AXIsProcessTrusted()
+    func detectChromeSessionIfDue() {
+        if lastChromeCheck == nil || Date().timeIntervalSince(lastChromeCheck!) >= RefreshSchedule.cookieInterval {
+            detectChromeSession()
+        }
+    }
+
+    func detectChromeSession(interactive: Bool = false, chooseProfile: Bool = false, profileID: String? = nil) {
+        guard !isDetectingChrome, interactive || chromeDetectionEnabled else { return }
+        isDetectingChrome = true
+        chromeMessage = nil
+        let revision = connectionRevision
+        let pinned = chooseProfile ? nil : (profileID ?? defaults.string(forKey: "chrome_profile_id"))
+        chromeQueue.async { [weak self] in
+            guard let reader = self?.chromeReader else { return }
+            let result = Result { try reader.discover(profileID: pinned, allowInteraction: interactive) }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isDetectingChrome = false
+                guard self.connectionRevision == revision else { return }
+                self.lastChromeCheck = Date()
+                switch result {
+                case .failure(let error): self.chromeMessage = error.localizedDescription
+                case .success(let sessions):
+                    self.chromeProfiles = sessions.map(\.profile)
+                    guard sessions.count == 1, let session = sessions.first else {
+                        self.chromeMessage = sessions.isEmpty
+                            ? "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
+                            : "Choose the Chrome profile to connect."
+                        return
+                    }
+                    self.defaults.set(session.profile.id, forKey: "chrome_profile_id")
+                    self.defaults.set(true, forKey: "chrome_detection_enabled")
+                    self.chromeDetectionEnabled = true
+                    self.chromeProfileName = session.profile.name
+                    self.chromeProfiles = []
+                    self.chromeMessage = "Connected to Chrome: \(session.profile.name). Rechecks hourly."
+                    if self.sessionCookie != session.cookieHeader {
+                        self.replaceSessionCookie(session.cookieHeader)
+                        self.fetchUsage()
+                    } else if !self.hasFetchedData { self.fetchUsage() }
+                }
+            }
+        }
+    }
+
+    func openClaudeInChrome() {
+        guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
+              let url = URL(string: "https://claude.ai/settings/usage") else {
+            chromeMessage = "Google Chrome is not installed. Install Chrome, or use a manual cookie."
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: chrome,
+                               configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            if error != nil {
+                DispatchQueue.main.async { self?.chromeMessage = "Could not open Chrome. Open Claude in Chrome manually and sign in." }
+            }
+        }
+    }
+
+    private func invalidateConnection() {
+        connectionRevision = UUID()
+        activeRequests.values.forEach { $0.cancel() }
+        activeRequests.removeAll()
+        isLoading = false
+    }
+
+    private func performRequest(_ request: URLRequest,
+                                completion: @escaping (Data?, URLResponse?, Error?) -> Void) {
+        let revision = connectionRevision
+        let id = UUID()
+        let task = apiSession.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self, self.connectionRevision == revision else { return }
+                self.activeRequests.removeValue(forKey: id)
+                completion(data, response, error)
+                if self.activeRequests.isEmpty { self.isLoading = false }
+            }
+        }
+        activeRequests[id] = task
+        task.resume()
     }
 
     func loadSessionCookie() {
-        if let savedCookie = UserDefaults.standard.string(forKey: "claude_session_cookie") {
+        if let savedCookie = defaults.string(forKey: "claude_session_cookie") {
             sessionCookie = savedCookie
         }
     }
 
     func loadSettings() {
         // Migrate from legacy single notifications_enabled flag (pre-v1.1) to split flags
-        let hasUsageKey  = UserDefaults.standard.object(forKey: "usage_notifications_enabled")  != nil
-        let hasStatusKey = UserDefaults.standard.object(forKey: "status_notifications_enabled") != nil
+        let hasUsageKey  = defaults.object(forKey: "usage_notifications_enabled")  != nil
+        let hasStatusKey = defaults.object(forKey: "status_notifications_enabled") != nil
 
         if !hasUsageKey || !hasStatusKey {
-            let legacyHasKey = UserDefaults.standard.object(forKey: "notifications_enabled") != nil
-            let legacyValue  = legacyHasKey ? UserDefaults.standard.bool(forKey: "notifications_enabled") : true
+            let legacyHasKey = defaults.object(forKey: "notifications_enabled") != nil
+            let legacyValue  = legacyHasKey ? defaults.bool(forKey: "notifications_enabled") : true
             if !hasUsageKey {
                 usageNotificationsEnabled = legacyValue
-                UserDefaults.standard.set(legacyValue, forKey: "usage_notifications_enabled")
+                defaults.set(legacyValue, forKey: "usage_notifications_enabled")
             }
             if !hasStatusKey {
                 statusNotificationsEnabled = legacyValue
-                UserDefaults.standard.set(legacyValue, forKey: "status_notifications_enabled")
+                defaults.set(legacyValue, forKey: "status_notifications_enabled")
             }
         }
         if hasUsageKey {
-            usageNotificationsEnabled = UserDefaults.standard.bool(forKey: "usage_notifications_enabled")
+            usageNotificationsEnabled = defaults.bool(forKey: "usage_notifications_enabled")
         }
         if hasStatusKey {
-            statusNotificationsEnabled = UserDefaults.standard.bool(forKey: "status_notifications_enabled")
+            statusNotificationsEnabled = defaults.bool(forKey: "status_notifications_enabled")
         }
 
         // Reflect the real system login-item state, not just a stored bool.
         if #available(macOS 13.0, *) {
             openAtLogin = (SMAppService.mainApp.status == .enabled)
         } else {
-            openAtLogin = UserDefaults.standard.bool(forKey: "open_at_login")
+            openAtLogin = defaults.bool(forKey: "open_at_login")
         }
-        lastNotifiedThreshold = UserDefaults.standard.integer(forKey: "last_notified_threshold")
+        lastNotifiedThreshold = defaults.integer(forKey: "last_notified_threshold")
         // Default shortcut to enabled if not previously set
-        if UserDefaults.standard.object(forKey: "shortcut_enabled") == nil {
+        if defaults.object(forKey: "shortcut_enabled") == nil {
             shortcutEnabled = true
         } else {
-            shortcutEnabled = UserDefaults.standard.bool(forKey: "shortcut_enabled")
+            shortcutEnabled = defaults.bool(forKey: "shortcut_enabled")
         }
     }
 
     func saveSettings() {
-        UserDefaults.standard.set(usageNotificationsEnabled,  forKey: "usage_notifications_enabled")
-        UserDefaults.standard.set(statusNotificationsEnabled, forKey: "status_notifications_enabled")
-        UserDefaults.standard.set(openAtLogin, forKey: "open_at_login")
-        UserDefaults.standard.set(shortcutEnabled, forKey: "shortcut_enabled")
-        UserDefaults.standard.synchronize()
+        defaults.set(usageNotificationsEnabled,  forKey: "usage_notifications_enabled")
+        defaults.set(statusNotificationsEnabled, forKey: "status_notifications_enabled")
+        defaults.set(openAtLogin, forKey: "open_at_login")
+        defaults.set(shortcutEnabled, forKey: "shortcut_enabled")
+        defaults.synchronize()
     }
 
     // Actually register/unregister the app as a macOS login item.
@@ -506,21 +644,58 @@ class UsageManager: ObservableObject {
     }
 
     func saveSessionCookie(_ cookie: String) {
-        NSLog("ClaudeUsage: Saving cookie, length: \(cookie.count)")
+        let normalized = cookie.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ChromeCookieReader.validateHeader(normalized) else {
+            errorMessage = "Paste a valid full Cookie header containing sessionKey."
+            return
+        }
+        chromeDetectionEnabled = false
+        defaults.set(false, forKey: "chrome_detection_enabled")
+        chromeProfileName = nil
+        chromeProfiles = []
+        chromeMessage = "Using a manual cookie. Detect Chrome Session to enable hourly sync."
+        replaceSessionCookie(normalized)
+        fetchUsage()
+    }
+
+    private func replaceSessionCookie(_ cookie: String) {
+        invalidateConnection()
+        let sameSession = sessionIdentity(sessionCookie) == sessionIdentity(cookie) && !sessionCookie.isEmpty
+        let priorThreshold = lastNotifiedThreshold
+        resetUsageData()
+        if sameSession {
+            lastNotifiedThreshold = priorThreshold
+            defaults.set(priorThreshold, forKey: "last_notified_threshold")
+        }
         sessionCookie = cookie
-        UserDefaults.standard.set(cookie, forKey: "claude_session_cookie")
-        UserDefaults.standard.synchronize()
-        NSLog("ClaudeUsage: Cookie saved successfully")
+        defaults.set(cookie, forKey: "claude_session_cookie")
+    }
+
+    private func sessionIdentity(_ header: String) -> [String] {
+        header.split(separator: ";").compactMap { part in
+            let field = part.trimmingCharacters(in: .whitespaces)
+            return field.hasPrefix("sessionKey=") || field.hasPrefix("lastActiveOrg=") ? field : nil
+        }.sorted()
     }
 
     func clearSessionCookie() {
-        NSLog("ClaudeUsage: Clearing cookie")
+        invalidateConnection()
+        chromeDetectionEnabled = false
+        chromeProfileName = nil
+        chromeProfiles = []
+        chromeMessage = "Session cleared. Detect Chrome Session to reconnect."
+        defaults.set(false, forKey: "chrome_detection_enabled")
         sessionCookie = ""
-        UserDefaults.standard.removeObject(forKey: "claude_session_cookie")
-        UserDefaults.standard.synchronize()
+        defaults.removeObject(forKey: "claude_session_cookie")
+        defaults.synchronize()
 
-        // Reset all data
+        resetUsageData()
+    }
+
+    private func resetUsageData() {
+        // Reset all data when credentials change so accounts never share usage state.
         sessionUsage = 0
+        sessionUtilization = 0
         weeklyUsage = 0
         weeklySonnetUsage = 0
         weeklyFableUsage = 0
@@ -540,12 +715,11 @@ class UsageManager: ObservableObject {
         hasWeeklyFable = false
         errorMessage = nil
         lastNotifiedThreshold = 0
-        UserDefaults.standard.set(0, forKey: "last_notified_threshold")
+        defaults.set(0, forKey: "last_notified_threshold")
 
         // Update status bar to show 0%
-        delegate?.updateStatusIcon(percentage: 0)
+        delegate?.updateSelectedProviderIcon()
 
-        NSLog("ClaudeUsage: Cookie cleared, data reset")
     }
 
     func fetchOrganizationId(completion: @escaping (String?) -> Void) {
@@ -555,9 +729,10 @@ class UsageManager: ObservableObject {
             let trimmed = part.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("lastActiveOrg=") {
                 let orgId = trimmed.replacingOccurrences(of: "lastActiveOrg=", with: "")
-                NSLog("📋 Found org ID in cookie: \(orgId)")
-                completion(orgId)
-                return
+                if UUID(uuidString: orgId) != nil {
+                    completion(orgId)
+                    return
+                }
             }
         }
 
@@ -569,30 +744,34 @@ class UsageManager: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("sessionKey=\(sessionCookie)", forHTTPHeaderField: "Cookie")
+        request.setValue(sessionCookie, forHTTPHeaderField: "Cookie")
 
         NSLog("📡 Fetching bootstrap to get org ID...")
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        performRequest(request) { data, response, error in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let account = json["account"] as? [String: Any],
-                  let lastActiveOrgId = account["lastActiveOrgId"] as? String else {
+                  let lastActiveOrgId = account["lastActiveOrgId"] as? String,
+                  UUID(uuidString: lastActiveOrgId) != nil,
+                  (response as? HTTPURLResponse)?.statusCode == 200 else {
                 NSLog("❌ Could not parse org ID from bootstrap")
                 completion(nil)
                 return
             }
             NSLog("✅ Got org ID from bootstrap: \(lastActiveOrgId)")
             completion(lastActiveOrgId)
-        }.resume()
+        }
     }
 
     func fetchUsage() {
+        guard activeRequests.isEmpty else { return }
+        lastFetchStartedAt = Date()
         guard !sessionCookie.isEmpty else {
-            DispatchQueue.main.async {
+
                 self.errorMessage = "Session cookie not set"
                 self.updateStatusBar()
-            }
+
             return
         }
 
@@ -602,10 +781,10 @@ class UsageManager: ObservableObject {
         // Extract org ID from cookie
         fetchOrganizationId { [weak self] orgId in
             guard let self = self, let orgId = orgId else {
-                DispatchQueue.main.async {
+
                     self?.errorMessage = "Could not get org ID from cookie"
                     self?.isLoading = false
-                }
+
                 return
             }
 
@@ -630,8 +809,8 @@ class UsageManager: ObservableObject {
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            DispatchQueue.main.async {
+        performRequest(request) { [weak self] data, response, _ in
+
                 guard let self = self,
                       let http = response as? HTTPURLResponse, http.statusCode == 200,
                       let data = data,
@@ -640,8 +819,8 @@ class UsageManager: ObservableObject {
                 self.limitResetsLeft = left
                 self.limitResetsEndAt = endAt
                 NSLog("🔄 Limit resets available: \(left)")
-            }
-        }.resume()
+
+        }
     }
 
     /// Counts resets still usable across grants (not paused, inside their window)
@@ -683,8 +862,8 @@ class UsageManager: ObservableObject {
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            DispatchQueue.main.async {
+        performRequest(request) { [weak self] data, response, _ in
+
                 guard let self = self,
                       let http = response as? HTTPURLResponse, http.statusCode == 200,
                       let data = data,
@@ -703,8 +882,8 @@ class UsageManager: ObservableObject {
                 }
                 if let cur = json["currency"] as? String { self.creditCurrency = cur }
                 NSLog("🎁 Free credits left: \(self.freeCreditsMinor) \(self.creditCurrency)")
-            }
-        }.resume()
+
+        }
     }
 
     // Extra usage spend + monthly limit live on a separate endpoint (not /usage).
@@ -720,8 +899,8 @@ class UsageManager: ObservableObject {
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            DispatchQueue.main.async {
+        performRequest(request) { [weak self] data, response, _ in
+
                 guard let self = self,
                       let http = response as? HTTPURLResponse, http.statusCode == 200,
                       let data = data,
@@ -739,18 +918,18 @@ class UsageManager: ObservableObject {
                 }
                 self.hasCreditUsage = spent > 0
                 NSLog("💳 Extra usage: \(spent)/\(limit) \(self.creditCurrency)")
-            }
-        }.resume()
+
+        }
     }
 
     func fetchUsageWithOrgId(_ orgId: String) {
         let urlString = "https://claude.ai/api/organizations/\(orgId)/usage"
 
         guard let url = URL(string: urlString) else {
-            DispatchQueue.main.async {
+
                 self.errorMessage = "Invalid URL"
                 self.isLoading = false
-            }
+
             return
         }
 
@@ -768,8 +947,8 @@ class UsageManager: ObservableObject {
 
         NSLog("🔍 Fetching from: \(urlString)")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
+        performRequest(request) { [weak self] data, response, error in
+
                 self?.isLoading = false
 
                 if let error = error {
@@ -787,9 +966,6 @@ class UsageManager: ObservableObject {
 
                 NSLog("📡 Status: \(httpResponse.statusCode)")
 
-                if let data = data, let responseString = String(data: data, encoding: .utf8) {
-                    NSLog("📦 Response: \(responseString)")
-                }
 
                 if httpResponse.statusCode == 200, let data = data {
                     self?.parseUsageData(data)
@@ -798,11 +974,16 @@ class UsageManager: ObservableObject {
                 }
 
                 self?.updateStatusBar()
-            }
-        }.resume()
+
+        }
     }
 
     func parseUsageData(_ data: Data) {
+        // Every response must establish fresh adaptive state, including invalid JSON.
+        sessionUtilization = 0
+        sessionUsage = 0
+        sessionResetsAt = nil
+        hasFetchedData = false
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 errorMessage = "Invalid JSON"
@@ -813,32 +994,41 @@ class UsageManager: ObservableObject {
 
             let iso8601Formatter = ISO8601DateFormatter()
             iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-            // Parse the actual claude.ai response format
-            if let fiveHour = json["five_hour"] as? [String: Any] {
-                if let sessionUtil = fiveHour["utilization"] as? Double {
-                    sessionUsage = Int(sessionUtil)
-                    sessionLimit = 100
-                }
-                if let resetsAtString = fiveHour["resets_at"] as? String {
-                    NSLog("🕐 Session resets_at string: \(resetsAtString)")
-                    if let resetsAt = iso8601Formatter.date(from: resetsAtString) {
-                        sessionResetsAt = resetsAt
-                        NSLog("✅ Parsed session reset time: \(resetsAt)")
-                    } else {
-                        NSLog("❌ Failed to parse session reset time")
-                    }
-                }
+            let plainFormatter = ISO8601DateFormatter()
+            plainFormatter.formatOptions = [.withInternetDateTime]
+            func resetDate(_ value: Any?) -> Date? {
+                guard let text = value as? String else { return nil }
+                return iso8601Formatter.date(from: text) ?? plainFormatter.date(from: text)
+            }
+            func percentage(_ value: Any?) -> Double? {
+                guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+                let result = number.doubleValue
+                return result.isFinite && result >= 0 && result <= 100 ? result : nil
             }
 
+            // Parse the actual claude.ai response format
+            guard let fiveHour = json["five_hour"] as? [String: Any],
+                  let sessionUtil = percentage(fiveHour["utilization"]) else {
+                sessionUtilization = 0
+                sessionUsage = 0
+                sessionResetsAt = nil
+                hasFetchedData = false
+                errorMessage = "Claude five-hour usage is unavailable or invalid. Refresh to try again."
+                return
+            }
+            sessionUtilization = sessionUtil
+            sessionUsage = Int(sessionUtil)
+            sessionLimit = 100
+            sessionResetsAt = resetDate(fiveHour["resets_at"])
+
             if let sevenDay = json["seven_day"] as? [String: Any] {
-                if let weeklyUtil = sevenDay["utilization"] as? Double {
+                if let weeklyUtil = percentage(sevenDay["utilization"]) {
                     weeklyUsage = Int(weeklyUtil)
                     weeklyLimit = 100
                 }
                 if let resetsAtString = sevenDay["resets_at"] as? String {
                     NSLog("🕐 Weekly resets_at string: \(resetsAtString)")
-                    if let resetsAt = iso8601Formatter.date(from: resetsAtString) {
+                    if let resetsAt = resetDate(resetsAtString) {
                         weeklyResetsAt = resetsAt
                         NSLog("✅ Parsed weekly reset time: \(resetsAt)")
                     } else {
@@ -850,13 +1040,13 @@ class UsageManager: ObservableObject {
             // Check for seven_day_sonnet (Pro plan feature)
             if let sevenDaySonnet = json["seven_day_sonnet"] as? [String: Any] {
                 hasWeeklySonnet = true
-                if let sonnetUtil = sevenDaySonnet["utilization"] as? Double {
+                if let sonnetUtil = percentage(sevenDaySonnet["utilization"]) {
                     weeklySonnetUsage = Int(sonnetUtil)
                     weeklySonnetLimit = 100
                 }
                 if let resetsAtString = sevenDaySonnet["resets_at"] as? String {
                     NSLog("🕐 Weekly Sonnet resets_at string: \(resetsAtString)")
-                    if let resetsAt = iso8601Formatter.date(from: resetsAtString) {
+                    if let resetsAt = resetDate(resetsAtString) {
                         weeklySonnetResetsAt = resetsAt
                         NSLog("✅ Parsed weekly Sonnet reset time: \(resetsAt)")
                     } else {
@@ -881,15 +1071,13 @@ class UsageManager: ObservableObject {
                 if let fable = fableLimit {
                     hasWeeklyFable = true
                     // `percent` may decode as Int or Double depending on payload.
-                    if let p = fable["percent"] as? Int {
-                        weeklyFableUsage = p
-                    } else if let p = fable["percent"] as? Double {
+                    if let p = percentage(fable["percent"]) {
                         weeklyFableUsage = Int(p)
                     }
                     weeklyFableLimit = 100
                     if let resetsAtString = fable["resets_at"] as? String {
                         NSLog("🕐 Weekly Fable resets_at string: \(resetsAtString)")
-                        if let resetsAt = iso8601Formatter.date(from: resetsAtString) {
+                        if let resetsAt = resetDate(resetsAtString) {
                             weeklyFableResetsAt = resetsAt
                             NSLog("✅ Parsed weekly Fable reset time: \(resetsAt)")
                         } else {
@@ -920,10 +1108,11 @@ class UsageManager: ObservableObject {
         let sessionPercent = Int((Double(sessionUsage) / Double(sessionLimit)) * 100)
 
         // Update the icon color
-        delegate?.updateStatusIcon(percentage: sessionPercent)
+        delegate?.updateSelectedProviderIcon()
+        delegate?.scheduleClaudePoll()
 
         // Check for notification thresholds
-        checkNotificationThresholds(percentage: sessionPercent)
+        if hasFetchedData { checkNotificationThresholds(percentage: sessionPercent) }
     }
 
     func checkNotificationThresholds(percentage: Int) {
@@ -942,8 +1131,8 @@ class UsageManager: ObservableObject {
                 sendNotification(percentage: percentage, threshold: threshold)
                 lastNotifiedThreshold = threshold
                 // Persist the threshold
-                UserDefaults.standard.set(lastNotifiedThreshold, forKey: "last_notified_threshold")
-                UserDefaults.standard.synchronize()
+                defaults.set(lastNotifiedThreshold, forKey: "last_notified_threshold")
+                defaults.synchronize()
             }
         }
 
@@ -952,8 +1141,8 @@ class UsageManager: ObservableObject {
             let newThreshold = thresholds.filter { $0 <= percentage }.last ?? 0
             NSLog("🔄 Resetting notification threshold from \(lastNotifiedThreshold)% to \(newThreshold)%")
             lastNotifiedThreshold = newThreshold
-            UserDefaults.standard.set(lastNotifiedThreshold, forKey: "last_notified_threshold")
-            UserDefaults.standard.synchronize()
+            defaults.set(lastNotifiedThreshold, forKey: "last_notified_threshold")
+            defaults.synchronize()
         }
     }
 
@@ -1238,9 +1427,8 @@ class UpdateManager: ObservableObject {
     @Published var available: AvailableUpdate?
     @Published var announcement: Announcement?
 
-    // Served directly from the repo via GitHub — free, unlimited, no Vercel meter.
-    // Same file as website/latest.json so existing v1.1 users on Vercel see the same JSON.
-    private let endpoint = URL(string: "https://raw.githubusercontent.com/Artzainnn/ClaudeUsageBar/main/website/latest.json")!
+    // Fork-owned feed prevents upstream releases from replacing LimitFuel changes.
+    private let endpoint = URL(string: "https://raw.githubusercontent.com/innolope-dev/LimitFuel/main/website/fork-latest.json")!
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -1320,7 +1508,7 @@ class UpdateManager: ObservableObject {
                     body: body,
                     buttons: Self.parseButtons(from: msg),
                     notify: (msg["notify"] as? Bool) ?? true,
-                    notifTitle: (notif?["title"] as? String) ?? (title.isEmpty ? "ClaudeUsageBar" : title),
+                    notifTitle: (notif?["title"] as? String) ?? (title.isEmpty ? "LimitFuel" : title),
                     notifBody:  (notif?["body"]  as? String) ?? body
                 )
             }()
@@ -1348,7 +1536,7 @@ class UpdateManager: ObservableObject {
                     let lastNotified = UserDefaults.standard.string(forKey: "last_notified_update_version")
                     if lastNotified != update.version {
                         let n = NSUserNotification()
-                        n.title = "ClaudeUsageBar \(update.version) is available"
+                        n.title = "LimitFuel \(update.version) is available"
                         n.informativeText = update.title
                         n.soundName = NSUserNotificationDefaultSoundName
                         NSUserNotificationCenter.default.deliver(n)
@@ -1584,6 +1772,8 @@ struct UsageView: View {
     @ObservedObject var usageManager: UsageManager
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
+    @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
+    @AppStorage("usage_provider") private var usageProvider = "claude"
     @State private var sessionCookieInput: String = ""
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
@@ -1597,7 +1787,24 @@ struct UsageView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                content
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Usage provider", selection: $usageProvider) {
+                        Text("Claude").tag("claude")
+                        Text("Codex").tag("codex")
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: usageProvider) { _ in
+                        (NSApplication.shared.delegate as? AppDelegate)?.updateSelectedProviderIcon()
+                    }
+                    if usageProvider == "codex" {
+                        CodexUsageView(manager: codexManager, notificationsEnabled: Binding(
+                            get: { usageManager.usageNotificationsEnabled },
+                            set: { usageManager.usageNotificationsEnabled = $0; usageManager.saveSettings() }
+                        ))
+                    } else {
+                        content
+                    }
+                }
                     .padding()
                     .background(
                         GeometryReader { geo in
@@ -1608,7 +1815,6 @@ struct UsageView: View {
             .frame(width: 360, height: min(max(measuredHeight, 100), maxPopupHeight))
             // Dark: light scrim over the native material — between fully native
             // (too transparent) and the v1.3.2 0.62 scrim (read as "too dark").
-            // TEST VALUE on ClaudeUsageBar only; CodexUsageBar stays fully native.
             // Light: near-opaque backing, or a dark desktop bleeds through as
             // murky blue-gray when forced.
             .background(
@@ -1621,9 +1827,6 @@ struct UsageView: View {
                 measuredHeight = value
             }
             .onAppear {
-                if let savedCookie = UserDefaults.standard.string(forKey: "claude_session_cookie") {
-                    sessionCookieInput = String(savedCookie.prefix(20)) + "..."
-                }
                 usageManager.updatePercentages()
             }
             .onChange(of: showingSettings) { isOpen in
@@ -1730,7 +1933,7 @@ struct UsageView: View {
 
             // Only show usage if data has been fetched
             if !usageManager.hasFetchedData {
-                Text("👋 Welcome! Set your session cookie below to get started.")
+                Text("👋 Welcome! Connect your Claude session from Chrome below.")
                     .font(.subheadline)
                     .foregroundColor(Color.secondaryText)
                     .padding(.vertical, 8)
@@ -2071,7 +2274,42 @@ struct UsageView: View {
             }
             }
 
-            Button(showingCookieInput ? "Hide Cookie" : "Set Session Cookie") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Button(usageManager.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
+                        usageManager.detectChromeSession(interactive: true, chooseProfile: true)
+                    }
+                    .disabled(usageManager.isDetectingChrome)
+                    .buttonStyle(.borderedProminent)
+                    Button("Open Claude in Chrome") { usageManager.openClaudeInChrome() }
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+                if let message = usageManager.chromeMessage {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundColor(Color.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(usageManager.chromeProfiles) { profile in
+                    Button("Use \(profile.name) (\(profile.id))") {
+                        usageManager.detectChromeSession(interactive: true, profileID: profile.id)
+                    }
+                    .disabled(usageManager.isDetectingChrome)
+                    .font(.caption)
+                }
+                if let checked = usageManager.lastChromeCheck {
+                    Text("Chrome checked: \(formatTime(checked))")
+                        .font(.caption2)
+                        .foregroundColor(Color.secondaryText)
+                }
+                Text("Usage refreshes every minute, or every 12 seconds above 90% five-hour usage until reset. Chrome cookies recheck hourly. macOS may ask for Chrome Safe Storage access when you click Detect.")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(showingCookieInput ? "Hide Manual Cookie" : "Use a Manual Cookie") {
                 showingCookieInput.toggle()
             }
             .buttonStyle(.borderless)
@@ -2116,19 +2354,17 @@ struct UsageView: View {
 
                             HStack(spacing: 8) {
                                 Button("Save Cookie & Fetch") {
-                                    NSLog("ClaudeUsage: Save clicked, input length: \(sessionCookieInput.count)")
                                     if sessionCookieInput.isEmpty {
                                         usageManager.errorMessage = "Cookie field is empty!"
                                     } else {
                                         usageManager.saveSessionCookie(sessionCookieInput)
-                                        usageManager.fetchUsage()
-                                        usageManager.errorMessage = "Cookie saved, fetching..."
+                                        sessionCookieInput = ""
                                     }
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .controlSize(.small)
 
-                                if usageManager.hasFetchedData {
+                                if UserDefaults.standard.string(forKey: "claude_session_cookie") != nil {
                                     Button("Clear Cookie") {
                                         sessionCookieInput = ""
                                         usageManager.clearSessionCookie()
@@ -2144,19 +2380,6 @@ struct UsageView: View {
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(6)
             }
-
-            // Support Section
-            Button(action: {
-                NSWorkspace.shared.open(URL(string: "https://donate.stripe.com/3cIcN5b5H7Q8ay8bIDfIs02")!)
-            }) {
-                HStack(spacing: 4) {
-                    Text("☕")
-                    Text("Buy Dev a Coffee")
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .foregroundColor(.orange)
 
             // Settings Section
             Button(showingSettings ? "Hide Settings" : "Settings") {
@@ -2253,18 +2476,7 @@ struct UsageView: View {
                         }
                         .toggleStyle(.switch)
 
-                        if usageManager.shortcutEnabled && !usageManager.isAccessibilityEnabled {
-                            Button("Grant Accessibility Permission") {
-                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
 
-                            Text("Accessibility permission may be needed\nfor the shortcut to work in all apps")
-                                .font(.caption2)
-                                .foregroundColor(Color.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
                     }
 
                     Divider()

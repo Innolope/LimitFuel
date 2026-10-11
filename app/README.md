@@ -1,6 +1,6 @@
-# ClaudeUsageBar
+# LimitFuel
 
-> Track your Claude.ai usage right from your Mac menu bar!
+> Track Claude and Codex limits from your Mac menu bar.
 
 A lightweight macOS menu bar app that displays your Claude.ai session and weekly usage limits with real-time updates and notifications.
 
@@ -9,7 +9,8 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 - 🟢 **Real-time Usage Tracking**: Monitor session (5-hour) and weekly (7-day) usage
 - 🎨 **Color-Coded Menu Bar Icon**: Visual indication of usage levels (green/yellow/red)
 - 🔔 **Smart Notifications**: Alerts at 25%, 50%, 75%, and 90% usage thresholds
-- ⚡ **Auto-Refresh**: Updates every 5 minutes automatically
+- ⚡ **Auto-Refresh**: Every minute, or every 12 seconds above 90% five-hour usage until reset
+- 🤖 **Codex**: Separate provider tab with metered buckets, window durations and reset times
 - ⌨️ **Keyboard Shortcut**: Toggle popup with Cmd+U from anywhere
 - 🔒 **Privacy First**: All data stored locally on your Mac
 - 📊 **Pro Plan Support**: Shows weekly Sonnet usage for Pro subscribers
@@ -35,36 +36,36 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 
 ## 🚀 Installation
 
-### Option 1: DMG Installer (Recommended)
-
-1. Download `ClaudeUsageBar-Installer.dmg` from [Releases](../../releases)
-2. Double-click the DMG file
-3. Drag ClaudeUsageBar to the Applications folder
-4. Eject the DMG
-5. Open ClaudeUsageBar from Applications
-
-### Option 2: ZIP Archive
-
-1. Download `ClaudeUsageBar.zip` from [Releases](../../releases)
-2. Extract the ZIP file
-3. Drag ClaudeUsageBar.app to Applications folder
-4. Open ClaudeUsageBar from Applications
-
-### Option 3: Build from Source
+Build this fork locally; a LimitFuel notarized installer has not been published.
 
 ```bash
 cd app
-chmod +x build.sh
-./build.sh
+./build.sh --local
 ```
 
-The built app will be in `build/ClaudeUsageBar.app`.
+Open `app/build/LimitFuel.app` from the repository root. This local build is
+ad-hoc signed and does not launch automatically.
 
 ## 🔧 First-Time Setup
 
-When you first launch ClaudeUsageBar, you'll see a welcome message. Follow these steps:
+When you first launch LimitFuel, you'll see a welcome message. Follow these steps:
 
-### Getting Your Session Cookie
+### Automatic Chrome connection
+
+Sign in to Claude in Google Chrome, then use **Detect Chrome Session**. The app
+checks automatically at launch and hourly while Chrome sync is enabled. If several
+profiles are signed in, choose one; subsequent checks stay on that profile.
+**Open Claude in Chrome** opens the usage page. On explicit detection, macOS may
+ask for Chrome Safe Storage Keychain access. Background checks never prompt.
+Missing, expired, locked or unsupported storage produces a visible message and
+preserves the saved cookie. Click Detect after signing in or unlocking.
+
+Manual Save or Clear stops hourly imports until you explicitly detect Chrome again.
+Saving or clearing cancels stale usage requests. Existing cookies/settings remain.
+Standard Google Chrome Default/Profile N directories are supported; custom data
+directories, other channels and browsers need manual entry.
+
+### Manual fallback: getting your session cookie
 
 1. Go to **Settings > Usage** on claude.ai
 2. Press **F12** (or Cmd+Option+I on Mac)
@@ -75,7 +76,7 @@ When you first launch ClaudeUsageBar, you'll see a welcome message. Follow these
 
 ### Adding Cookie to App
 
-1. Click **"Set Session Cookie"** in the app
+1. Click **"Use a Manual Cookie"** in the app
 2. Paste your cookie (Cmd+V works!)
 3. Click **"Save Cookie & Fetch"**
 4. Your usage will appear immediately! 🎉
@@ -91,11 +92,11 @@ Access settings by clicking the gear icon in the popup:
 
 ### Keyboard Shortcut (Cmd+U)
 - Toggle popup from anywhere on your Mac
-- Requires Accessibility permission
-- Click "Enable Keyboard Shortcut" to grant permission
+- Uses Carbon global hotkeys without an Accessibility request
+- Disable it in Settings if it conflicts with another app
 
 ### Launch at Login
-- Start ClaudeUsageBar automatically when you log in
+- Start LimitFuel automatically when you log in
 
 ## 🔒 Privacy & Security
 
@@ -117,7 +118,7 @@ Access settings by clicking the gear icon in the popup:
 
 ### Build the App
 ```bash
-./build.sh
+./build.sh --local
 ```
 
 ### Create DMG Installer
@@ -128,20 +129,21 @@ Access settings by clicking the gear icon in the popup:
 ### Clean Build
 ```bash
 rm -rf build
-./build.sh
+./build.sh --local
 ```
 
 ## 🐛 Troubleshooting
 
 ### "No data yet" showing
-- Make sure you've pasted your session cookie
-- Click "Save Cookie & Fetch"
-- Verify you copied the full cookie string
+- Sign in to Claude in Chrome, then click Detect Chrome Session
+- Choose the correct profile if several are signed in
+- Use the manual fallback if Chrome storage cannot be read
 
 ### Cookie expired
 - Session cookies expire periodically
-- Get a new cookie from claude.ai
-- Click "Clear Cookie" then re-add it
+- Chrome cookies recheck hourly; click Detect Chrome Session for an immediate check
+- Sign in again using Open Claude in Chrome if needed
+- Manual users can paste a fresh full cookie header
 
 ### Notifications not working
 - Click "Test Notification" in Settings
@@ -149,20 +151,19 @@ rm -rf build
 - Check macOS Focus mode isn't blocking them
 
 ### Cmd+U shortcut not working
-- Click "Enable Keyboard Shortcut" in Settings
-- Grant Accessibility permission in System Settings
-- Restart the app after granting permission
+- Enable Keyboard Shortcut in Settings
+- Check whether another app has registered Cmd+U
+- Disable/re-enable the shortcut or restart the app to register again
 
 ### Usage not updating
-- App auto-refreshes every 5 minutes
+- App auto-refreshes every minute
 - Click the refresh button to update manually
 - If cookie expired, get a new one
 
-## 📦 Distribution Files
+## 📦 Distribution
 
-- **ClaudeUsageBar-Installer.dmg** - Drag-to-install DMG (1.6 MB)
-- **README.md** - This file
-- **LICENSE** - MIT License
+Local builds produce `build/LimitFuel.app`. Distribution signing and notarization
+require a configured Developer ID and are separate from local development.
 
 ## 🤝 Contributing
 
@@ -191,3 +192,37 @@ Built with:
 ---
 
 **Made with ❤️ for the Claude community**
+
+## Local development checks
+
+Run `./Tests/run.sh` from the repository root. Tests use synthetic cookies and
+injected responses to cover encryption, limits, SQLite WAL/locks, profile isolation,
+refresh coalescing and stale responses after session changes.
+
+Use `./build.sh --local` in `app/` for an explicitly ad-hoc signed universal build.
+It does not launch automatically and is not a notarized distribution artifact.
+The default build still requires the configured Developer ID certificate and
+fails on signing errors. Never use local mode for a public release.
+
+Session cookies retain the existing local UserDefaults storage for compatibility.
+Chrome Safe Storage keys are requested through macOS Keychain and held only during
+an import; cookie values, keys and raw API responses are never logged.
+
+## Codex connection
+
+Install Codex CLI and sign in with ChatGPT using `codex login`. Select Codex in
+the popup; choose its executable if it is outside common installation locations.
+Only initialization, account/read and account/rateLimits/read RPCs are issued.
+No threads, inference, credit purchases/resets or email actions are started.
+Codex owns its authentication and renewal; the app never stores its tokens.
+Missing sign-in, unavailable executable or invalid/failed checks show an error
+and clear stale Codex data. CLI subprocesses have a 20-second timeout.
+
+Both providers poll independently every minute, increasing to 12 seconds only
+while a five-hour window is above 90%. At a known reset, or when usage drops to
+90% or below, polling returns to one minute. Status checks remain every minute
+and Chrome cookie import remains hourly. Smart alerts share the usage notification
+setting, with Codex deduplication scoped to its account, bucket and quota window.
+
+Existing manual-cookie installations start in manual mode to preserve their
+chosen identity. Click Detect Chrome Session to opt into automatic hourly sync.

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "timeout_seconds": 480,
+  "checks": [
+    {"name": "tests", "argv": ["./Tests/run.sh"], "cwd": "."},
+    {"name": "lint", "argv": ["./Tests/lint.sh"], "cwd": "."}
+  ]
+}

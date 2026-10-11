@@ -1,6 +1,6 @@
 {
-  "name": "ClaudeUsageBar",
-  "short_name": "ClaudeUsageBar",
+  "name": "LimitFuel",
+  "short_name": "LimitFuel",
   "description": "Track your Claude usage and live Claude service status from your Mac menu bar.",
   "start_url": "/",
   "display": "standalone",

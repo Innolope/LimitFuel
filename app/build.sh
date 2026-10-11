@@ -1,8 +1,16 @@
 #!/bin/bash
+set -euo pipefail
 
-# Build script for ClaudeUsageBar
+# Build script for LimitFuel
 
-echo "Building ClaudeUsageBar..."
+echo "Building LimitFuel..."
+
+LOCAL_BUILD=false
+case "${1:-}" in
+    --local) LOCAL_BUILD=true ;;
+    "") ;;
+    *) echo "Usage: ./build.sh [--local]" >&2; exit 2 ;;
+esac
 
 # Create fresh build directory (delete any stale build to avoid accumulated xattrs
 # from prior signs, which can cause "resource fork / detritus" errors on codesign).
@@ -10,7 +18,7 @@ rm -rf build
 mkdir -p build
 
 # Create app bundle structure first
-APP_NAME="ClaudeUsageBar.app"
+APP_NAME="LimitFuel.app"
 APP_PATH="build/$APP_NAME"
 
 mkdir -p "$APP_PATH/Contents/MacOS"
@@ -20,55 +28,68 @@ mkdir -p "$APP_PATH/Contents/Resources"
 cp Info.plist "$APP_PATH/Contents/"
 
 # Create icon if it doesn't exist
-if [ ! -f "ClaudeUsageBar.icns" ]; then
+if [ ! -f "LimitFuel.icns" ]; then
     echo "Creating app icon..."
     ./make_app_icon.sh >/dev/null 2>&1
 fi
 
 # Copy icon to Resources
-if [ -f "ClaudeUsageBar.icns" ]; then
-    cp ClaudeUsageBar.icns "$APP_PATH/Contents/Resources/"
+if [ -f "LimitFuel.icns" ]; then
+    cp LimitFuel.icns "$APP_PATH/Contents/Resources/"
     # Update Info.plist to reference icon
-    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string ClaudeUsageBar" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile ClaudeUsageBar" "$APP_PATH/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string LimitFuel" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile LimitFuel" "$APP_PATH/Contents/Info.plist"
 fi
 
 # Compile the Swift app for arm64
-swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/ClaudeUsageBar_arm64" \
-    ClaudeUsageBar.swift \
+swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
+    -module-cache-path build/ModuleCache \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift \
+    -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \
     -framework WebKit \
     -target arm64-apple-macos12.0
 
 # Compile for x86_64 (Intel)
-swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/ClaudeUsageBar_x86_64" \
-    ClaudeUsageBar.swift \
+swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
+    -module-cache-path build/ModuleCache \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift \
+    -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \
     -framework WebKit \
     -target x86_64-apple-macos12.0
 
 # Create universal binary
-lipo -create -output "$APP_PATH/Contents/MacOS/ClaudeUsageBar" \
-    "$APP_PATH/Contents/MacOS/ClaudeUsageBar_arm64" \
-    "$APP_PATH/Contents/MacOS/ClaudeUsageBar_x86_64"
+lipo -create -output "$APP_PATH/Contents/MacOS/LimitFuel" \
+    "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
+    "$APP_PATH/Contents/MacOS/LimitFuel_x86_64"
 
 # Clean up individual arch binaries
-rm "$APP_PATH/Contents/MacOS/ClaudeUsageBar_arm64"
-rm "$APP_PATH/Contents/MacOS/ClaudeUsageBar_x86_64"
+rm "$APP_PATH/Contents/MacOS/LimitFuel_arm64"
+rm "$APP_PATH/Contents/MacOS/LimitFuel_x86_64"
 
 # Create PkgInfo file
 echo -n "APPL????" > "$APP_PATH/Contents/PkgInfo"
 
 # Set proper permissions first
-chmod 755 "$APP_PATH/Contents/MacOS/ClaudeUsageBar"
+chmod 755 "$APP_PATH/Contents/MacOS/LimitFuel"
 
 # Clean any "detritus" that codesign rejects: extended attributes, ._files, .DS_Store
 xattr -cr "$APP_PATH"
 find "$APP_PATH" -name '._*' -delete 2>/dev/null
 find "$APP_PATH" -name '.DS_Store' -delete 2>/dev/null
 dot_clean "$APP_PATH" 2>/dev/null
+
+# Explicit local builds use an ad-hoc signature and do not launch automatically.
+# Distribution builds require Developer ID and never fall back to ad-hoc.
+if $LOCAL_BUILD; then
+    codesign --force --deep --sign - "$APP_PATH"
+    codesign --verify --deep --strict "$APP_PATH"
+    echo "Local universal app built: $APP_PATH (ad-hoc signed, not notarized)"
+    exit 0
+fi
 
 # Sign with Developer ID certificate. NEVER silently fall back to ad-hoc — that
 # fails notarization later. If real signing fails, error out loudly.
