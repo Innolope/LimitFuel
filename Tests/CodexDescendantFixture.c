@@ -19,7 +19,7 @@ static int marker(const char *executable, const char *suffix) {
     return fclose(file) == 0;
 }
 int main(int argc, char **argv) {
-    (void)argc;
+    if (argc == 2 && strcmp(argv[1], "--prepare") == 0) return 0;
     if (!marker(argv[0], ".parent.pid")) return 91;
     pid_t child = fork();
     if (child < 0) return 92;

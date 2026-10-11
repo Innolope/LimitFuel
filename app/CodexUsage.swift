@@ -54,7 +54,8 @@ struct CodexSnapshot {
                 let bucketID = SHA256.hash(data: Data(bucket.id.utf8)).map { String(format: "%02x", $0) }.joined()
                 return MenuBarWindowOption(id: "codex:\(bucketID):\(entry.id)", provider: .codex,
                     label: "\(name) · \(role) · \(duration)", percent: entry.window.usedPercent,
-                    durationMinutes: entry.window.windowDurationMins, isPreferredBucket: bucket.id == "codex")
+                    durationMinutes: entry.window.windowDurationMins, isPreferredBucket: bucket.id == "codex",
+                    resetsAt: entry.window.resetsAt)
             }
         }
     }
@@ -252,6 +253,12 @@ struct CodexClient {
 
 final class CodexUsageManager: ObservableObject {
     @Published var snapshot: CodexSnapshot?
+    private var retainedMenuBarOptions: [MenuBarWindowOption] = []
+    @Published private(set) var menuBarIsStale = false
+    @Published private(set) var menuBarUpdatedAt: Date?
+    var menuBarDisplayOptions: [MenuBarWindowOption] {
+        snapshot?.menuBarOptions ?? retainedMenuBarOptions
+    }
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var lastUpdated: Date?
@@ -286,7 +293,9 @@ final class CodexUsageManager: ObservableObject {
         guard !isLoading else { return }
         lastFetchStartedAt = Date()
         isLoading = true
+        menuBarIsStale = !menuBarDisplayOptions.isEmpty
         errorMessage = nil
+        onChange?()
         let fetcher = self.fetcher
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let result = Result { try fetcher() }
@@ -296,6 +305,11 @@ final class CodexUsageManager: ObservableObject {
                 switch result {
                 case .failure(let error):
                     self.snapshot = nil
+                    if case .some(.signIn) = error as? CodexUsageError {
+                        self.retainedMenuBarOptions = []
+                        self.menuBarUpdatedAt = nil
+                    }
+                    self.menuBarIsStale = !self.retainedMenuBarOptions.isEmpty
                     self.errorMessage = (error as? CodexUsageError)?.localizedDescription ?? CodexUsageError.protocolFailure.localizedDescription
                     let code: DiagnosticErrorCode
                     switch error as? CodexUsageError {
@@ -314,7 +328,10 @@ final class CodexUsageManager: ObservableObject {
                     }
                     self.lastAccount = value.accountLabel
                     self.snapshot = value
+                    self.retainedMenuBarOptions = value.menuBarOptions
+                    self.menuBarIsStale = false
                     self.lastUpdated = Date()
+                    self.menuBarUpdatedAt = self.lastUpdated
                     self.checkNotifications(value)
                 }
                 self.onChange?()

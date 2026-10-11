@@ -70,6 +70,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         app.usageManager.sessionUtilization = 92
         app.usageManager.weeklyUsage = 34
         app.menuBarPreferences = MenuBarPreferences(defaults:defaults)
+        app.menuBarPreferences.setPercentageMode(.used)
         app.menuBarPreferences.onChange = { [weak app] in app?.updateSelectedProviderIcon() }
         app.statusManager = StatusManager()
         app.updateManager = UpdateManager()
@@ -132,7 +133,14 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":9}}"#.utf8));menu(9,0)
         demand(app.menuBarPreferences.selectionID(for:.claude) == cw,"Missing Claude selection was destroyed")
         app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":7},"seven_day":{"utilization":0}}"#.utf8));menu(0,0)
-        app.usageManager.parseUsageData(Data("invalid".utf8));menu(nil,0)
+        // Newly approved last-known retention supersedes the earlier policy that
+        // invalid data clears the display; raw current options still clear below.
+        app.usageManager.parseUsageData(Data("invalid".utf8));menu(0,0)
+        let retainedTooltip = app.statusItem.button!.toolTip ?? ""
+        let claudeStart = retainedTooltip.range(of:"Claude")!.lowerBound
+        let claudeEnd = retainedTooltip.range(of:"Codex")?.lowerBound ?? retainedTooltip.endIndex
+        let retainedClaudeTooltip = String(retainedTooltip[claudeStart..<claudeEnd]).lowercased()
+        demand(retainedClaudeTooltip.contains("last known") || retainedClaudeTooltip.contains("last-known"),"Retained Claude tooltip must identify last-known data")
         demand(app.usageManager.menuBarOptions.isEmpty,"Invalid Claude JSON retained account options")
         app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":7}}"#.utf8));menu(7,0)
         app.usageManager.clearSessionCookie();menu(nil,0)

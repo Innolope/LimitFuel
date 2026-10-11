@@ -19,8 +19,25 @@ Read with the active plan before engineering changes.
 - Menu bar shows one percentage per connected provider, with independent persisted
   bucket/window selection in Settings and a session-first default. Missing selections
   fall back without destroying the saved ID; current account data alone supplies usage.
+  A separate global Used/Remaining toggle defaults to Remaining and transforms only
+  the menu display; raw used values still drive meters, polling and notifications.
 - Menu bar uses the app mark only while disconnected, and connected provider
   marks with percentages otherwise. Preserve0%, accessible labels and1x/2x templates.
+- Selected menu windows include a centered reset badge with one remaining-time
+  unit: days, hours or rounded-up minutes. Unknown resets omit only the badge.
+- Keep validated menu values in memory through transient fetch/parse failures.
+  Auth failure, clear or changed identity removes them; valid responses replace
+  all windows. Last-known values never trigger notifications.
+- Blur percentage/countdown text after10minutes without that provider's successful
+  usage update, reaching1.2pt at30minutes. Logos/backgrounds stay sharp. Exact
+  values and age remain accessible; Increase Contrast/Reduce Transparency disables
+  blur. Redraw on existing timers/wake; no new permissions or network polls.
+- Chrome sync failure does not imply a disconnected Claude API session. Keep
+  sync controls in Settings while usage works; expose reconnect on actual auth failure.
+- Claude optional weekly/model limits require valid current-response data. Missing
+  or invalid values hide the row and clear prior values/resets; numeric0 remains valid.
+  Overall Claude Weekly0 is hidden while session usage is positive; show both
+  when both are0. Compare unrounded values and preserve explicit menu selections.
 - Existing manual credentials/settings survive upgrades; manual save/clear stops
   hourly imports until explicitly enabled again.
 - Test with disposable fixtures only, covering encryption, WAL and failure paths.

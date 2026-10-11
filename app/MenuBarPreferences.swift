@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 
+enum MenuBarPercentageMode: String { case used, remaining }
+
 struct MenuBarWindowOption: Identifiable, Equatable {
     let id: String
     let provider: MenuBarProvider
@@ -8,6 +10,7 @@ struct MenuBarWindowOption: Identifiable, Equatable {
     let percent: Double
     let durationMinutes: Int?
     let isPreferredBucket: Bool
+    var resetsAt: Date? = nil
 }
 
 enum MenuBarSelection {
@@ -30,6 +33,7 @@ enum MenuBarSelection {
 
 final class MenuBarPreferences: ObservableObject {
     @Published private var selections: [MenuBarProvider: String]
+    @Published private(set) var percentageMode: MenuBarPercentageMode
     private let defaults: UserDefaults
     // Called after the new preference is available; observing objectWillChange
     // would read the old value when immediately redrawing the status item.
@@ -37,9 +41,18 @@ final class MenuBarPreferences: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        percentageMode = (defaults.object(forKey: "menubar_percentage_mode") as? String)
+            .flatMap(MenuBarPercentageMode.init(rawValue:)) ?? .remaining
         selections = Dictionary(uniqueKeysWithValues: [MenuBarProvider.claude, .codex].map { provider in
             (provider, Self.normalized(defaults.object(forKey: Self.key(provider)) as? String))
         })
+    }
+
+    func setPercentageMode(_ mode: MenuBarPercentageMode) {
+        defaults.set(mode.rawValue, forKey: "menubar_percentage_mode")
+        guard percentageMode != mode else { return }
+        percentageMode = mode
+        onChange?()
     }
 
     func selectionID(for provider: MenuBarProvider) -> String {

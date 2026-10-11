@@ -46,3 +46,57 @@ the option producer through the Settings picker. Stable choice IDs alone do not
 make labels distinguishable. Different names are a safe counterexample: they
 need no extra identifier. MenuPreferencesIntegrationTests asserts duplicate names
 include distinct bucket IDs and labels remain stable across percentage changes.
+
+## 2026-10-11: separate browser sync from provider connection
+
+Trigger: a saved Claude cookie still fetches valid usage, but hourly Chrome sync
+cannot read Safe Storage. The old dashboard renders connection buttons whenever
+chromeNeedsAttention is true, suggesting disconnected usage. Inspect
+`rg -n 'chromeNeedsAttention|showsClaudeConnectionControls|hasFetchedData|401|403' app`.
+Follow the usage HTTP result and cookie-sync result separately. A real401/403 is
+a safe counterexample: recovery controls must remain reachable after prior success.
+ClaudePresentationAcceptanceTests covers all16sync-state combinations and
+success→401/403/500/timeout→success, with fake HTTP and forbidden Keychain access.
+
+## 2026-10-11: optional usage availability and stale reset state
+
+Trigger: a response with weekly/model limits is followed by one without them or
+with invalid optional values. Unconditional rendering invents Weekly0%; retained
+model flags/reset times can make nonexistent limits look real. Existing-API
+baseline reproduced15failures in21assertions before the repair. Inspect
+`rg -n 'resetOptionalUsage|hasWeeklyUsage|hasWeeklySonnet|hasWeeklyFable|weeklyResetsAt' app`.
+Trace each parse failure, successful response and account clear. Numeric0 is a
+real available value, including for explicit menu selection. The user-approved
+dashboard heuristic hides overall Claude Weekly0 while session usage is positive,
+and shows both at0; this must not erase raw availability or round decimal positives
+before making the visibility decision. Check `showsClaudeWeeklyUsage` and its
+dashboard call site; matrix and native row-transition tests cover this rule.
+Frozen acceptance covers256seeded optional-data combinations, seed0xCA11AB1E20261011,
+and present→missing→zero→clear sequences. No subscription-name inference is used.
+
+## 2026-10-11: transient refresh must not erase a connected menu value
+
+Offline baseline reproduced Codex15% disappearing after timeout, Claude18%
+disappearing after HTTP500, and Claude18% disappearing while a same-session
+auxiliary cookie changed. Canonical fetch state and menu display had shared
+clearing behavior. Inspect `rg -n 'menuBarDisplayOptions|retainedMenuBarOptions|resetUsageData|sessionIdentity|menuBarUpdatedAt' app`.
+Trace loading, every failure, recovery and credential revision. Valid response
+missing a formerly available window is a safe counterexample: its new complete
+snapshot must replace the cache. Actual401/403/signIn and identity changes must
+also remove old values. Frozen MenuRefreshStabilityTests covers offline faults,
+coalescing, late cancellation, raw/display separation and notification suppression.
+StaleBlurAcceptanceTests verifies600..1800second bounds, independent update age,
+exact accessible values and1x/2x text-only image changes.
+
+## 2026-10-11: native fixture readiness includes loader startup
+
+Fresh identical native executable paths sometimes reached main after the6second
+fixture readiness deadline on a host with load>500; warm paths started29..46ms.
+Workspace and /private/tmp both failed, while Process.run returned within11ms.
+Do not infer that the product failed descendant cleanup before the fixture became
+ready. Inspect preparation and readiness separately. The explicit --prepare mode
+must complete within30seconds without markers, output or children before the
+unchanged6second readiness/8second client/12.5second completion scenario. A warm
+fixture that becomes ready promptly but survives cleanup is a real product
+failure, not a startup exemption. FixturePreparationTests verifies repeatability
+and side-effect absence; preparation timeouts remain visible gate failures.
