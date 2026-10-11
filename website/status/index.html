@@ -62,8 +62,8 @@
       display: flex; align-items: center; justify-content: space-between;
     }
     .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; color: var(--text-primary); }
-    .logo-icon { width: 28px; height: 28px; background: var(--claude-orange); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
-    .logo-icon svg { width: 16px; height: 16px; }
+    .logo-icon { display: block; width: 28px; height: 28px; border-radius: 8px; }
+    .logo-icon img { display: block; width: 100%; height: 100%; }
     .nav-links { display: flex; gap: 28px; align-items: center; }
     .nav-links a { font-size: 14px; color: var(--text-secondary); transition: color .2s; }
     .nav-links a:hover { color: var(--text-primary); }
@@ -335,15 +335,15 @@
   <div class="nav-content">
     <a href="/" class="logo">
       <span class="logo-icon">
-        <svg viewBox="0 0 16 16" fill="none"><path d="M8 1L9 6L13 3L10 7L15 8L10 9L13 13L9 10L8 15L7 10L3 13L6 9L1 8L6 7L3 3L7 6L8 1Z" fill="white"/></svg>
+        <img src="/favicon.svg" alt="" width="28" height="28">
       </span>
       <span>LimitFuel</span>
     </a>
     <div class="nav-links">
       <a href="/#features">Features</a>
       <a href="/#faq">FAQ</a>
-      <a href="https://github.com/innolope-dev/LimitFuel" target="_blank">GitHub</a>
-      <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="nav-cta"><svg class="download-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="margin-right:6px;vertical-align:-2px;"><path d="M8 11.5L4 7.5l1.4-1.4L7 7.7V1h2v6.7l1.6-1.6L12 7.5l-4 4zM2 13h12v2H2v-2z"/></svg>Build</a>
+      <a href="https://github.com/Innolope/LimitFuel" target="_blank">GitHub</a>
+      <a href="https://github.com/Innolope/LimitFuel#build-from-source" class="nav-cta"><svg class="download-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" style="margin-right:6px;vertical-align:-2px;"><path d="M8 11.5L4 7.5l1.4-1.4L7 7.7V1h2v6.7l1.6-1.6L12 7.5l-4 4zM2 13h12v2H2v-2z"/></svg>Build</a>
         <a href="/status" class="nav-status-pill loading" data-nav-status><span class="nav-status-dot loading" data-nav-status></span><span>Claude Status</span></a>
     </div>
   </div>
@@ -388,7 +388,7 @@
     <h2>Track Claude Usage &amp; Status from your Mac</h2>
     <p class="cta-lead"><b>LimitFuel</b> is a free, open-source macOS menu bar app. It quietly tracks your Claude usage limits (5-hour session + weekly) and pings you the moment a Claude service you depend on goes down.</p>
     <div class="cta-buttons">
-      <a class="cta-button" href="https://github.com/innolope-dev/LimitFuel#build-from-source" data-fast-goal="download_macos">Build from source</a>
+      <a class="cta-button" href="https://github.com/Innolope/LimitFuel#build-from-source" data-fast-goal="download_macos">Build from source</a>
       <a class="cta-secondary" href="/">See all features →</a>
     </div>
   </div>
@@ -398,9 +398,9 @@
   <a href="/status" class="footer-status-pill loading" data-nav-status><span class="footer-status-dot loading" data-nav-status></span><span>Claude Status</span></a>
   <a href="/">Home</a>
   <a href="/blog/">Blog</a>
-  <a href="https://github.com/innolope-dev/LimitFuel" target="_blank">GitHub</a>
-  <a href="https://github.com/innolope-dev/LimitFuel/blob/main/LICENSE" target="_blank">License</a>
-  <a href="https://github.com/innolope-dev/LimitFuel#build-from-source" class="footer-cta-link" data-fast-goal="download_macos">Build from source</a>
+  <a href="https://github.com/Innolope/LimitFuel" target="_blank">GitHub</a>
+  <a href="https://github.com/Innolope/LimitFuel/blob/main/LICENSE" target="_blank">License</a>
+  <a href="https://github.com/Innolope/LimitFuel#build-from-source" class="footer-cta-link" data-fast-goal="download_macos">Build from source</a>
 </footer>
 
 <script>

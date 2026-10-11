@@ -16,14 +16,17 @@ Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/Claude
 ## 📦 Set Up (1mn)
 
 1. Sign in to [claude.ai/settings/usage](https://claude.ai/settings/usage) in Google Chrome.
-2. Launch the app; it detects your Chrome session automatically when access is available.
-3. Click **Detect Chrome Session** if macOS needs permission to read Chrome Safe Storage.
-4. Choose a profile when several Chrome profiles are signed in.
+2. Launch the app; it picks up your Chrome session automatically.
+3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
+   "Chrome Safe Storage" when macOS asks.
+4. If several Chrome profiles are signed in, choose one.
+5. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
+   ChatGPT if needed); its limits appear below Claude's. See [Codex setup](#codex-setup).
 
-Chrome cookies recheck hourly and usage refreshes every minute. **Open Claude in
-Chrome** opens the usage page for sign-in. Manual cookie entry remains available.
-Chrome storage is read only; no Accessibility or Automation permission, extension
-or remote debugging is required.
+Usage refreshes every minute and Chrome cookies recheck hourly. **Open Claude in
+Chrome** opens the sign-in page. Chrome storage is only read; no Accessibility or
+Automation permission, extension or remote debugging is required. A manual cookie
+option remains for other browsers.
 
 ## ✨ Features
 
@@ -32,7 +35,7 @@ or remote debugging is required.
 - 🔔 **Smart notifications** - Alerts at 25%, 50%, 75%, 90% usage thresholds
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
-- 🤖 **Codex tracking** - Claude/Codex selector, per-bucket limits and reset times from your existing Codex sign-in
+- 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
 - 🔒 **Privacy-first** - All data stored locally on your Mac
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
 - 🎯 **Menu bar only** - No Dock icon, stays out of your way
@@ -44,7 +47,7 @@ or remote debugging is required.
 1. **Build** this fork using `cd app && ./build.sh --local`
 2. **Open** `app/build/LimitFuel.app` from the repository root
 3. **Sign in** to Claude in Chrome or Codex CLI with ChatGPT
-4. **Connect Chrome** using Detect Chrome Session (or use the manual fallback)
+4. **Connect Chrome**: the session is picked up automatically, or click Detect Chrome Session
 5. **Done!** Usage appears in menu bar
 
 ## 📸 Screenshots
@@ -92,9 +95,9 @@ The test runner uses the toolchain and SDK in `/Applications/Xcode.app`.
 
 ## Codex setup
 
-Install Codex CLI and sign in with ChatGPT (`codex login`), then select **Codex**
-in the popup. The app detects common CLI/app executable locations; **Choose Codex
-Executable…** supports other locations. It uses Codex app-server's documented
+Install Codex CLI and sign in with ChatGPT (`codex login`); Codex limits then
+appear in the popup under Claude. The app detects common CLI/app executable locations; **Choose Codex
+Executable…** in Settings supports other locations. It uses Codex app-server's documented
 read-only account and rate-limit methods, so Codex handles its own credentials
 and refresh. API-key-only accounts do not expose ChatGPT plan quotas.
 
@@ -123,7 +126,7 @@ as unavailable; Codex supports multiple metered buckets and actual window length
 
 Contributions are welcome! Here's how you can help:
 
-- 🐛 Report bugs via [Issues](https://github.com/innolope-dev/LimitFuel/issues)
+- 🐛 Report bugs via [Issues](https://github.com/Innolope/LimitFuel/issues)
 - 💡 Suggest features or improvements
 - 🔧 Submit pull requests
 - 📖 Improve documentation
@@ -146,8 +149,8 @@ If you find this useful, consider:
 ## 🔗 Links
 
 - **Upstream website:** [claudeusagebar.com](https://claudeusagebar.com)
-- **Issues:** [GitHub Issues](https://github.com/innolope-dev/LimitFuel/issues)
-- **Releases:** [GitHub Releases](https://github.com/innolope-dev/LimitFuel/releases)
+- **Issues:** [GitHub Issues](https://github.com/Innolope/LimitFuel/issues)
+- **Releases:** [GitHub Releases](https://github.com/Innolope/LimitFuel/releases)
 
 ---
 

@@ -50,36 +50,32 @@ ad-hoc signed and does not launch automatically.
 
 When you first launch LimitFuel, you'll see a welcome message. Follow these steps:
 
-### Automatic Chrome connection
+### Claude: automatic Chrome connection
 
-Sign in to Claude in Google Chrome, then use **Detect Chrome Session**. The app
-checks automatically at launch and hourly while Chrome sync is enabled. If several
-profiles are signed in, choose one; subsequent checks stay on that profile.
-**Open Claude in Chrome** opens the usage page. On explicit detection, macOS may
-ask for Chrome Safe Storage Keychain access. Background checks never prompt.
-Missing, expired, locked or unsupported storage produces a visible message and
-preserves the saved cookie. Click Detect after signing in or unlocking.
+1. Sign in to claude.ai in Google Chrome. **Open Claude in Chrome** in the popup
+   opens the sign-in page.
+2. Launch LimitFuel. It picks up the Chrome session automatically.
+3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
+   "Chrome Safe Storage" when macOS asks. Background checks never prompt.
+4. If several Chrome profiles are signed in, choose one; subsequent checks stay on
+   that profile.
 
-Manual Save or Clear stops hourly imports until you explicitly detect Chrome again.
-Saving or clearing cancels stale usage requests. Existing cookies/settings remain.
-Standard Google Chrome Default/Profile N directories are supported; custom data
-directories, other channels and browsers need manual entry.
+No browser extension, Accessibility or Automation permission is needed; Chrome
+storage is only read. Missing, expired, locked or unsupported storage produces a
+visible message and preserves the saved cookie. Click Detect after signing in or
+unlocking. Standard Google Chrome Default/Profile N directories are supported.
 
-### Manual fallback: getting your session cookie
+A manual cookie option remains for other browsers, Chrome channels and custom data
+directories. Saving or clearing a manual cookie stops hourly imports until you
+click Detect Chrome Session again.
 
-1. Go to **Settings > Usage** on claude.ai
-2. Press **F12** (or Cmd+Option+I on Mac)
-3. Go to **Network** tab in DevTools
-4. Refresh the page, click the "usage" request
-5. Find **'Cookie'** in Request Headers
-6. Copy the **full cookie value** (starts with `anthropic-device-id=...`)
+### Codex
 
-### Adding Cookie to App
+LimitFuel uses your existing Codex CLI sign-in; run `codex login` with ChatGPT if
+needed; Codex limits appear in the popup under Claude. See [Codex connection](#codex-connection).
 
-1. Click **"Use a Manual Cookie"** in the app
-2. Paste your cookie (Cmd+V works!)
-3. Click **"Save Cookie & Fetch"**
-4. Your usage will appear immediately! 🎉
+Both providers refresh every minute, or every 12 seconds above 90% five-hour usage
+until reset. Chrome cookies are rechecked hourly.
 
 ## ⚙️ Settings
 
@@ -88,7 +84,7 @@ Access settings by clicking the gear icon in the popup:
 ### Notifications
 - Enable/disable usage alerts
 - Get notifications at 25%, 50%, 75%, 90% thresholds
-- Click "Test Notification" to verify it works
+- Click "Send Test Notification" to verify it works
 
 ### Keyboard Shortcut (Cmd+U)
 - Toggle popup from anywhere on your Mac
@@ -137,16 +133,15 @@ rm -rf build
 ### "No data yet" showing
 - Sign in to Claude in Chrome, then click Detect Chrome Session
 - Choose the correct profile if several are signed in
-- Use the manual fallback if Chrome storage cannot be read
+- If macOS asked for Chrome Safe Storage access and you denied it, click Detect Chrome Session again and allow it
 
 ### Cookie expired
 - Session cookies expire periodically
 - Chrome cookies recheck hourly; click Detect Chrome Session for an immediate check
 - Sign in again using Open Claude in Chrome if needed
-- Manual users can paste a fresh full cookie header
 
 ### Notifications not working
-- Click "Test Notification" in Settings
+- Click "Send Test Notification" in Settings
 - Notifications work without permission prompts
 - Check macOS Focus mode isn't blocking them
 
@@ -158,7 +153,7 @@ rm -rf build
 ### Usage not updating
 - App auto-refreshes every minute
 - Click the refresh button to update manually
-- If cookie expired, get a new one
+- If the cookie expired, sign in to Claude in Chrome again and click Detect Chrome Session
 
 ## 📦 Distribution
 
@@ -224,5 +219,5 @@ while a five-hour window is above 90%. At a known reset, or when usage drops to
 and Chrome cookie import remains hourly. Smart alerts share the usage notification
 setting, with Codex deduplication scoped to its account, bucket and quota window.
 
-Existing manual-cookie installations start in manual mode to preserve their
-chosen identity. Click Detect Chrome Session to opt into automatic hourly sync.
+Installations upgraded with a saved cookie keep using it and skip automatic Chrome
+checks. Click Detect Chrome Session to switch to automatic hourly sync.

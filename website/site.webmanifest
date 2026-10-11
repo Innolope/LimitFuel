@@ -1,7 +1,7 @@
 {
   "name": "LimitFuel",
   "short_name": "LimitFuel",
-  "description": "Track your Claude usage and live Claude service status from your Mac menu bar.",
+  "description": "Track your Claude and Codex usage limits from your Mac menu bar.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0d0d0f",
@@ -10,6 +10,6 @@
     { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
     { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
     { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
-    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+    { "src": "/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
   ]
 }
