@@ -236,3 +236,82 @@ the complete macOS glass appearance.
 Status at this source checkpoint: local acceptance and lint passed. Clean-source
 universal build, hosted exact-head CI and installation with rollback follow the
 commit; those receipts must be recorded separately before claiming delivery.
+
+## Separator revision and CI accessibility fixture correction
+
+The user explicitly replaces the translucent reset badge with plain text and a
+vertical separator: provider mark, percentage, `|`, and the existing one-unit
+reset countdown. Omit both separator and countdown when reset is unknown. Keep
+percentage and countdown vertically centered, both providers independently
+visible, and Used/Remaining preference and freshness behavior unchanged.
+This is a visual revision of the previously approved badge, not a timing change.
+Plan mode cannot be switched by this client; this persisted plan remains the
+equivalent working plan.
+
+Build/install receipt for 21ece3f: local universal build and strict ad-hoc
+signature passed; 1.3.7 (12) was installed and launched with a verified binary
+hash and a preserved 1.3.6 backup. Hosted run 38180010677 failed only eight stale
+text pixel-difference assertions; universal build was skipped. No rerun occurred.
+The fixtures omitted allowsBlur and inadvertently inherited host accessibility
+policy. Official actions/runner-images configure-system.sh explicitly enables
+Reduce Transparency. This strongly explains the matrix of failures; the next
+test run will print the actual host preference flags as a receipt.
+
+Clarified renderer contract: allowsBlur defaults to nil, respecting both live
+Increase Contrast and Reduce Transparency flags. An explicit true/false is a
+deterministic internal fixture override and must not query those flags. All
+application callers keep the default policy. Injected preference truth-table
+tests supplement every existing numerical/pixel/logo assertion; no OS settings,
+assertions, deadlines or CI budgets will be weakened. The independent spec author
+freezes these tests before the separate implementation role changes production.
+
+### What can go wrong
+
+- Invalid reset timestamps: omit countdown and separator together; retain the
+  percentage. Existing invalid/date-boundary acceptance remains applicable.
+- Concurrency: the draw closure must consistently use its captured entries and
+  percentage mode. No additional mutable state or async operation is introduced.
+- Idempotency: repeated rendering of identical input/preferences has identical
+  dimensions and pixels. Keep explicit overrides independent of host state.
+- Timeouts: no external operation is added; existing test/build deadlines remain.
+- Retries: no network, polling or retry changes in this visual/API slice.
+- Partial failure: missing provider artwork keeps the existing fallback; absent
+  reset does not remove its provider's number. Validate both 1x and 2x output.
+- Auth: rendering has no credential access; existing clear/identity invariants
+  remain covered by the unchanged refresh and age suites.
+- Data limits: keep the existing bounded date, finite percentage and two-provider
+  contracts. Separators must not collide with adjacent percentage/countdown glyphs.
+- Migration: no preference/schema/version migration. Existing Used/Remaining
+  choice persists; Remaining is still the default. The installed verified prior
+  binary and backup remain available until a new clean-source build is verified.
+
+Verification milestones: frozen acceptance, focused native raster inspection,
+accessibility-policy mutant rejection, complete configured gate, ordinary guarded
+commit, one push with a concrete changed condition, exact-head hosted checks,
+clean-source universal build and verified installation. Keep PR #3 draft until
+hosted checks pass; no new merge authorization is inferred.
+
+Frozen revision acceptance SHA256:
+948a0eb3628929428f8c73a7d838ee169e3f40f447537498777584e90ce068b7.
+The independent author preserved existing assertions and added native plain
+separator/policy coverage before the implementation role was released. Official
+runner source inspected at revision 8197087fc536320d1441203fdb5da9ae1b44b863,
+images/macos/scripts/build/configure-system.sh (Reduce Transparency enabled).
+
+Focused revision verification passed all 4,573 frozen assertions, including
+the preserved 2,048 generated ages (seed 0x5A1EB10B), all injected accessibility
+combinations, deterministic overrides and 1x/2x spacing/alignment. Native raster
+inspection covered both providers, a single provider and unknown reset on dark
+and light backgrounds. Percentage stays 13pt regular, countdown stays 10pt medium;
+the centered 1pt divider and logos stay sharp. No font-size change was requested.
+The local host receipt was Increase Contrast false / Reduce Transparency false.
+A disposable variant that ignores accessibility preferences was rejected by
+12 policy assertions; production source was not mutated. Full configured gate,
+hosted CI, clean-source build and new installation remain separate milestones.
+
+The revision's complete test and lint commands both exited zero, including
+offline Sentry privacy. The quality gate correctly rejected the receipt because
+the parent changed README/plan documentation and staged the index during checks.
+This is an invalidated validation snapshot, not a passing gate or failing product
+test. Final inputs are now frozen; ordinary guarded commit must revalidate them
+without concurrent file/index changes. No gate or invariant is bypassed.

@@ -56,13 +56,13 @@ option remains for other browsers.
 
 **Menu Bar Display:**
 ```
-Claude mark 82% [4h]   OpenAI mark 85% [6d]
+Claude mark 82% | 4h   OpenAI mark 85% | 6d
 ```
 
 The percentages show remaining capacity by default. In Settings → Menu bar
-usage, turn off **Show remaining percentage** to show used capacity. The badge
-shows time until that selected limit resets, with one unit: days, hours, or minutes.
-Unknown reset times omit the badge. Tooltips identify the percentage meaning.
+usage, turn off **Show remaining percentage** to show used capacity. Reset time
+follows a plain separator, for example `81% | 6d`, using days, hours, or minutes.
+Unknown reset times omit the countdown and separator. Tooltips identify the percentage meaning.
 
 Temporary refresh failures keep the last successful value visible. After ten
 minutes without a successful update, that provider's numbers gradually blur,

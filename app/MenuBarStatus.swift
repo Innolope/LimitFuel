@@ -79,21 +79,38 @@ enum MenuBarStatus {
         }.joined(separator: ", ")
     }
 
-    static func image(for entries: [MenuBarEntry], now: Date = Date(), allowsBlur: Bool = true) -> NSImage {
+    static func image(for entries: [MenuBarEntry], now: Date = Date(), allowsBlur: Bool? = nil,
+                      accessibilityPreferences: () -> (increaseContrast: Bool, reduceTransparency: Bool) = {
+                          (NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+                           NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
+                      }) -> NSImage {
+        let blurEnabled: Bool
+        if let allowsBlur = allowsBlur {
+            // Explicit fixture overrides never consult machine preferences.
+            blurEnabled = allowsBlur
+        } else {
+            let preferences = accessibilityPreferences()
+            blurEnabled = !preferences.increaseContrast && !preferences.reduceTransparency
+        }
         let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
         let strings = entries.map { NSAttributedString(string: "\($0.percent)%", attributes: attributes) }
         let textWidths = strings.map { ceil($0.size().width) }
-        let badgeAttributes: [NSAttributedString.Key: Any] = [
+        let countdownAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.black
         ]
-        let badges = entries.map { entry in
-            resetLabel(resetsAt: entry.resetsAt, now: now).map { NSAttributedString(string: $0, attributes: badgeAttributes) }
+        let countdowns = entries.map { entry in
+            resetLabel(resetsAt: entry.resetsAt, now: now).map { NSAttributedString(string: $0, attributes: countdownAttributes) }
         }
-        let badgeWidths = badges.map { $0.map { ceil($0.size().width) + 8 } ?? 0 }
-        let badgeExtents = badgeWidths.map { $0 > 0 ? $0 + 4 : 0 }
+        // Five points on each side keep the sharp divider outside the text
+        // blur padding, including at the maximum stale radius.
+        let dividerGap: CGFloat = 5
+        let dividerWidth: CGFloat = 1
+        let resetExtents = countdowns.map { countdown in
+            countdown.map { ceil($0.size().width) + 2 * dividerGap + dividerWidth } ?? 0
+        }
         let width: CGFloat = entries.isEmpty ? 18 :
-            textWidths.reduce(0, +) + badgeExtents.reduce(0, +) + CGFloat(entries.count) * 22 + CGFloat(entries.count - 1) * 10
+            textWidths.reduce(0, +) + resetExtents.reduce(0, +) + CGFloat(entries.count) * 22 + CGFloat(entries.count - 1) * 10
         let marks = entries.map { providerMark($0.provider) }
         // Draw at the destination's resolution. lockFocus caches the source at
         // an implicit scale, causing width-dependent edge resampling at 1x/2x.
@@ -112,8 +129,6 @@ enum MenuBarStatus {
                     }
                 }
             }
-            let blurEnabled = allowsBlur && !NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-                && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
             var x: CGFloat = 0
             for index in entries.indices {
                 if let mark = marks[index] {
@@ -128,15 +143,14 @@ enum MenuBarStatus {
                 let text = strings[index]
                 let radius = blurEnabled ? blurRadius(lastUpdated: entries[index].updatedAt, now: now) : 0
                 drawText(text, at: NSPoint(x: x + 22, y: floor((18 - text.size().height) / 2)), radius: radius)
-                if let badge = badges[index] {
-                    let badgeX = x + 22 + textWidths[index] + 4
-                    let rect = NSRect(x: badgeX, y: 2, width: badgeWidths[index], height: 14)
-                    NSColor.black.withAlphaComponent(0.12).setFill()
-                    NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
-                    NSColor.black.set()
-                    drawText(badge, at: NSPoint(x: badgeX + 4, y: floor((18 - badge.size().height) / 2)), radius: radius)
+                if let countdown = countdowns[index] {
+                    let dividerX = x + 22 + textWidths[index] + dividerGap
+                    NSColor.black.setFill()
+                    NSRect(x: dividerX, y: 4, width: dividerWidth, height: 10).fill()
+                    drawText(countdown, at: NSPoint(x: dividerX + dividerWidth + dividerGap,
+                        y: floor((18 - countdown.size().height) / 2)), radius: radius)
                 }
-                x += 22 + textWidths[index] + badgeExtents[index] + 10
+                x += 22 + textWidths[index] + resetExtents[index] + 10
             }
             return true
         }

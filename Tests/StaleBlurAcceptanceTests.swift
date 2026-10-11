@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-// Frozen against SPEC.md only. No network, services, credentials or preferences.
+// Frozen against SPEC.md only. No network, services, credentials or preference writes.
 @main
 struct StaleBlurAcceptanceTests {
     static let now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -191,18 +191,18 @@ struct StaleBlurAcceptanceTests {
 
     static func imageAcceptance() {
         for provider: MenuBarProvider in [.claude, .codex] {
-            // No reset exercises percentage alone; reset exercises percentage plus countdown badge.
+            // No reset exercises percentage alone; reset exercises the plain separator/countdown.
             for reset in [nil, Optional(now.addingTimeInterval(3_600))] {
                 let stale = MenuBarEntry(provider: provider, percent: 43, resetsAt: reset,
                                          isStale: true, updatedAt: now.addingTimeInterval(-1_800))
                 let fresh = MenuBarEntry(provider: provider, percent: 43, resetsAt: reset,
                                          isStale: false, updatedAt: now)
-                let sharp = MenuBarStatus.image(for: [fresh], now: now)
-                let blurred = MenuBarStatus.image(for: [stale], now: now)
+                let sharp = MenuBarStatus.image(for: [fresh], now: now, allowsBlur: true)
+                let blurred = MenuBarStatus.image(for: [stale], now: now, allowsBlur: true)
                 let fallback = MenuBarStatus.image(for: [stale], now: now, allowsBlur: false)
                 let missing = MenuBarEntry(provider: provider, percent: 43, resetsAt: reset,
                                            isStale: true, updatedAt: nil)
-                let unknown = MenuBarStatus.image(for: [missing], now: now)
+                let unknown = MenuBarStatus.image(for: [missing], now: now, allowsBlur: true)
                 let context = "\(provider.rawValue), badge=\(reset != nil)"
                 check(sharp.isTemplate && blurred.isTemplate && fallback.isTemplate,
                       "monochrome template contract: \(context)")
@@ -230,11 +230,147 @@ struct StaleBlurAcceptanceTests {
         }
     }
 
+    static func accessibilityPolicyAcceptance() {
+        let live = NSWorkspace.shared
+        let liveContrast = live.accessibilityDisplayShouldIncreaseContrast
+        let liveTransparency = live.accessibilityDisplayShouldReduceTransparency
+        print("ACCESSIBILITY-RECEIPT increaseContrast=\(liveContrast) reduceTransparency=\(liveTransparency)")
+        for provider: MenuBarProvider in [.claude, .codex] {
+            let stale = MenuBarEntry(provider: provider, percent: 81,
+                resetsAt: now.addingTimeInterval(6 * 86_400), isStale: true,
+                updatedAt: now.addingTimeInterval(-1_800))
+            for scale in [1, 2] {
+                guard let sharp = pixels(MenuBarStatus.image(for: [stale], now: now, allowsBlur: false), scale: scale),
+                      let blurred = pixels(MenuBarStatus.image(for: [stale], now: now, allowsBlur: true), scale: scale) else {
+                    check(false, "policy reference raster \(provider), \(scale)x"); continue
+                }
+                check(sharp.bytes != blurred.bytes, "policy references preserve visible blur: \(provider), \(scale)x")
+                for contrast in [false, true] {
+                    for transparency in [false, true] {
+                        var omittedCalls = 0
+                        var nilCalls = 0
+                        let omitted = MenuBarStatus.image(for: [stale], now: now, accessibilityPreferences: {
+                            omittedCalls += 1
+                            return (increaseContrast: contrast, reduceTransparency: transparency)
+                        })
+                        let explicitNil = MenuBarStatus.image(for: [stale], now: now, allowsBlur: nil, accessibilityPreferences: {
+                            nilCalls += 1
+                            return (increaseContrast: contrast, reduceTransparency: transparency)
+                        })
+                        guard let a = pixels(omitted, scale: scale), let b = pixels(explicitNil, scale: scale) else {
+                            check(false, "injected policy raster"); continue
+                        }
+                        let expected = contrast || transparency ? sharp : blurred
+                        check(a.bytes == expected.bytes && b.bytes == expected.bytes,
+                              "omitted/nil respects preference truth table contrast=\(contrast), transparency=\(transparency), \(provider), \(scale)x")
+                        check(omittedCalls > 0 && nilCalls > 0, "default policy consults injected preferences")
+                        for forced in [false, true] {
+                            var overrideCalls = 0
+                            let image = MenuBarStatus.image(for: [stale], now: now, allowsBlur: forced, accessibilityPreferences: {
+                                overrideCalls += 1
+                                return (increaseContrast: contrast, reduceTransparency: transparency)
+                            })
+                            guard let actual = pixels(image, scale: scale) else {
+                                check(false, "override policy raster"); continue
+                            }
+                            check(actual.bytes == (forced ? blurred : sharp).bytes,
+                                  "explicit override controls fixture pixels for all preferences")
+                            check(overrideCalls == 0, "explicit override never reads accessibility preferences")
+                        }
+                    }
+                }
+                let defaultLiveImage = MenuBarStatus.image(for: [stale], now: now)
+                guard let actualLive = pixels(defaultLiveImage, scale: scale) else {
+                    check(false, "live default policy raster"); continue
+                }
+                check(actualLive.bytes == (liveContrast || liveTransparency ? sharp : blurred).bytes,
+                      "real app default respects sampled live preferences: \(provider), \(scale)x")
+            }
+        }
+    }
+
+    static func columnInk(_ image: Pixels, x: Int) -> Int {
+        (0..<image.height).reduce(0) { count, y in
+            count + (image.bytes[(y * image.width + x) * 4 + 3] > 8 ? 1 : 0)
+        }
+    }
+    static func prefixEqual(_ a: Pixels, _ b: Pixels, endX: Int) -> Bool {
+        guard a.height == b.height && endX <= min(a.width, b.width) else { return false }
+        for y in 0..<a.height {
+            if a.bytes[(y * a.width) * 4..<(y * a.width + endX) * 4] !=
+               b.bytes[(y * b.width) * 4..<(y * b.width + endX) * 4] { return false }
+        }
+        return true
+    }
+    static func plainResetAcceptance() {
+        for provider: MenuBarProvider in [.claude, .codex] {
+            let bare = MenuBarEntry(provider: provider, percent: 81, updatedAt: now)
+            let reset = MenuBarEntry(provider: provider, percent: 81,
+                resetsAt: now.addingTimeInterval(6 * 86_400), updatedAt: now)
+            let staleReset = MenuBarEntry(provider: provider, percent: 81,
+                resetsAt: reset.resetsAt, isStale: true, updatedAt: now.addingTimeInterval(-1_800))
+            let bareImage = MenuBarStatus.image(for: [bare], now: now, allowsBlur: true)
+            let resetImage = MenuBarStatus.image(for: [reset], now: now, allowsBlur: true)
+            let staleImage = MenuBarStatus.image(for: [staleReset], now: now, allowsBlur: true)
+            check(bareImage.isTemplate && resetImage.isTemplate && staleImage.isTemplate,
+                  "plain reset images remain templates")
+            check(bareImage.size.height == 18 && resetImage.size.height == 18 && resetImage.size.width > bareImage.size.width,
+                  "known reset adds separator/countdown width at native height")
+            for scale in [1, 2] {
+                guard let barePixels = pixels(bareImage, scale: scale),
+                      let resetPixels = pixels(resetImage, scale: scale),
+                      let stalePixels = pixels(staleImage, scale: scale) else {
+                    check(false, "plain reset raster \(provider), \(scale)x"); continue
+                }
+                check(prefixEqual(barePixels, resetPixels, endX: barePixels.width),
+                      "adding reset preserves aligned logo/percentage prefix: \(provider), \(scale)x")
+                let percentColumns = (18 * scale..<barePixels.width).filter { columnInk(barePixels, x: $0) > 0 }
+                guard let percentEnd = percentColumns.last,
+                      let dividerStart = (percentEnd + 1..<resetPixels.width).first(where: { columnInk(resetPixels, x: $0) > 0 }) else {
+                    check(false, "known reset has appended separator ink"); continue
+                }
+                let dividerEnd = (dividerStart..<resetPixels.width).first(where: { columnInk(resetPixels, x: $0) == 0 }) ?? resetPixels.width
+                let dividerWidth = dividerEnd - dividerStart
+                check(dividerStart - percentEnd > scale && dividerWidth > 0 && dividerWidth <= 2 * scale,
+                      "plain divider is narrow with clear leading spacing: \(provider), \(scale)x")
+                check(((dividerStart..<dividerEnd).map { columnInk(resetPixels, x: $0) }.max() ?? 0) >= 8 * scale,
+                      "plain divider is a tall vertical stroke")
+                let countdownStart = (dividerEnd..<resetPixels.width).first(where: { columnInk(resetPixels, x: $0) > 0 })
+                check(countdownStart.map { $0 - dividerEnd >= scale } ?? false,
+                      "plain divider has clear spacing before countdown")
+                check(region(resetPixels, stalePixels, startX: dividerStart, endX: dividerEnd),
+                      "plain divider remains sharp when provider text blurs: \(provider), \(scale)x")
+                var filledRun = 0
+                var broadFill = false
+                for x in percentEnd + 1..<resetPixels.width {
+                    filledRun = columnInk(resetPixels, x: x) >= 8 * scale ? filledRun + 1 : 0
+                    if filledRun > 3 * scale { broadFill = true }
+                }
+                check(!broadFill, "plain reset has no broad filled badge-alpha region: \(provider), \(scale)x")
+                if let countdownStart {
+                    let countdownRows = (0..<resetPixels.height).filter { y in
+                        (countdownStart..<resetPixels.width).contains { x in resetPixels.bytes[(y * resetPixels.width + x) * 4 + 3] > 8 }
+                    }
+                    let percentageRows = (0..<barePixels.height).filter { y in
+                        (18 * scale..<barePixels.width).contains { x in barePixels.bytes[(y * barePixels.width + x) * 4 + 3] > 8 }
+                    }
+                    if let a = percentageRows.first, let b = percentageRows.last,
+                       let c = countdownRows.first, let d = countdownRows.last {
+                        check(abs((a + b) - (c + d)) <= 2 * scale,
+                              "percentage/countdown share vertical text alignment: \(provider), \(scale)x")
+                    } else { check(false, "plain percentage/countdown both have visible ink") }
+                }
+            }
+        }
+    }
+
     static func main() {
         scalarAcceptance()
         selectionAcceptance()
         accessibilityAcceptance()
         imageAcceptance()
+        accessibilityPolicyAcceptance()
+        plainResetAcceptance()
         if failures.isEmpty {
             print("PASS: \(assertions) frozen stale-blur acceptance assertions; seed=0x5A1EB10B; 2048 ages; native 1x/2x")
         } else {

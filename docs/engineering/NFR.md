@@ -23,8 +23,9 @@ Read with the active plan before engineering changes.
   the menu display; raw used values still drive meters, polling and notifications.
 - Menu bar uses the app mark only while disconnected, and connected provider
   marks with percentages otherwise. Preserve0%, accessible labels and1x/2x templates.
-- Selected menu windows include a centered reset badge with one remaining-time
-  unit: days, hours or rounded-up minutes. Unknown resets omit only the badge.
+- Selected menu windows include centered reset text separated from the percentage
+  by `|`, with one remaining-time unit: days, hours or rounded-up minutes. Unknown
+  resets omit both countdown and separator. No countdown background is drawn.
 - Keep validated menu values in memory through transient fetch/parse failures.
   Auth failure, clear or changed identity removes them; valid responses replace
   all windows. Last-known values never trigger notifications.

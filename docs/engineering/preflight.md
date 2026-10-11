@@ -1,5 +1,22 @@
 # LimitFuel defect preflight
 
+## 2026-10-11: keep raster fixtures independent of host accessibility policy
+
+Hosted run 38180010677 failed the eight stale-text pixel-difference cases while
+all other blur assertions passed locally and on CI. The fixtures inherited live
+NSWorkspace preferences; official actions/runner-images configure-system.sh
+sets Reduce Transparency true. This is a concrete host-policy explanation,
+pending the next run's actual preference receipt, rather than evidence to remove
+the application's accessibility fallback.
+
+Inspect `rg -n 'allowsBlur|accessibilityPreferences|accessibilityDisplayShould' app Tests`.
+Production callers must use the default live accessibility policy. A deterministic
+fixture can explicitly choose rendering while separate injected truth-table tests
+cover the real default and prove explicit overrides do not read host preferences.
+Fresh values are a safe counterexample: they remain sharp with either policy.
+Preserve every numerical, visible blur, sharp-logo and native-scale assertion;
+do not change the runner's OS preferences or weaken contrast/transparency support.
+
 ## 2026-10-11: retained popup scroll position
 
 Trigger: scroll a tall dashboard to its footer, close and reopen. The persisted
