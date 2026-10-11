@@ -21,8 +21,9 @@ struct CodexUsageView: View {
                             .tracking(0.6)
                             .foregroundColor(Color.secondaryText)
                     }
-                    meter(bucket.primary, fallback: "Primary")
-                    meter(bucket.secondary, fallback: "Secondary")
+                    ForEach(bucket.displayWindows) { entry in
+                        meter(entry.window, fallback: entry.id == "primary" ? "Primary" : "Secondary")
+                    }
                 }
             } else if manager.isLoading {
                 HStack(spacing: 8) {
@@ -46,16 +47,16 @@ struct CodexUsageView: View {
         .glassCard()
     }
 
-    private func meter(_ value: CodexWindow?, fallback: String) -> some View {
-        let mins = value?.windowDurationMins
-        let fraction = (value?.usedPercent ?? 0) / 100
+    private func meter(_ value: CodexWindow, fallback: String) -> some View {
+        let mins = value.windowDurationMins
+        let fraction = value.usedPercent / 100
         return MeterRow(
             title: mins == 300 ? "Session" : mins == 10080 ? "Weekly" : fallback,
             subtitle: mins == 300 ? "5h" : mins == 10080 ? "7d" : mins.map { durationLabel($0) },
-            percent: value.map { Int($0.usedPercent.rounded()) },
+            percent: Int(value.usedPercent.rounded()),
             fraction: fraction,
             color: meterColor(fraction, base: Brand.codex),
-            footnote: value == nil ? "Unavailable" : value?.resetsAt.map { resetDescription($0) })
+            footnote: value.resetsAt.map { resetDescription($0) })
     }
 
     private func durationLabel(_ minutes: Int) -> String {

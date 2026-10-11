@@ -87,7 +87,7 @@ fi
 # Compile the Swift app for arm64
 run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift AppDiagnostics.swift SentryDiagnostics.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift MenuBarPreferences.swift PopupLayout.swift AppDiagnostics.swift SentryDiagnostics.swift \
     -F "$SENTRY_FRAMEWORK_DIR" -framework Sentry -Xlinker -ObjC \
     -lsqlite3 -framework Security \
     -framework SwiftUI \
@@ -98,7 +98,7 @@ run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_
 # Compile for x86_64 (Intel)
 run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift AppDiagnostics.swift SentryDiagnostics.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift MenuBarPreferences.swift PopupLayout.swift AppDiagnostics.swift SentryDiagnostics.swift \
     -F "$SENTRY_FRAMEWORK_DIR" -framework Sentry -Xlinker -ObjC \
     -lsqlite3 -framework Security \
     -framework SwiftUI \

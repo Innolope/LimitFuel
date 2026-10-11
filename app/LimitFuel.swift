@@ -325,7 +325,7 @@ func resetDescription(_ date: Date, now: Date = Date()) -> String {
 }
 
 // Main entry point
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var usageManager: UsageManager!
@@ -336,6 +336,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var codexPollTimer: Timer?
     var eventMonitor: Any?
     var hotKeyRef: EventHotKeyRef?
+    let popupPresentation = PopupPresentation()
+    var menuBarPreferences = MenuBarPreferences()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDiagnostics.shared.start()
@@ -365,18 +367,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateSelectedProviderIcon()
             self?.scheduleCodexPoll()
         }
+        menuBarPreferences.onChange = { [weak self] in self?.updateSelectedProviderIcon() }
 
         // Create popover
         popover = NSPopover()
-        // Initial guess; SwiftUI's intrinsic size (capped at 600) will drive the actual size.
-        popover.contentSize = NSSize(width: 360, height: 320)
+        popover.contentSize = NSSize(width: 360, height: popupPresentation.viewportHeight)
         popover.behavior = .transient
+        popover.delegate = self
+        popupPresentation.onResize = { [weak self] height in
+            guard let self = self else { return }
+            let size = NSSize(width: 360, height: height)
+            if self.popover.contentSize != size { self.popover.contentSize = size }
+        }
         popover.contentViewController = NSHostingController(rootView: UsageView(
             usageManager: usageManager,
             statusManager: statusManager,
             updateManager: updateManager,
-            codexManager: codexManager
+            codexManager: codexManager,
+            popupPresentation: popupPresentation,
+            menuBarPreferences: menuBarPreferences
         ))
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePopupScreenBounds),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePopupScreenBounds),
+            name: NSWindow.didChangeScreenNotification, object: statusItem.button?.window)
 
         // Appearance preference: "system" (default) tracks the macOS light/dark
         // setting; "dark"/"light" force one (dark was hard-forced in v1.3.2 and
@@ -456,9 +470,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateSelectedProviderIcon() {
         guard let button = statusItem?.button else { return }
-        let bucket = codexManager?.snapshot?.buckets.first(where: { $0.id == "codex" }) ?? codexManager?.snapshot?.buckets.first
-        let codex = (bucket?.primary ?? bucket?.secondary)?.usedPercent
-        let claude = usageManager?.hasFetchedData == true ? usageManager?.sessionUtilization : nil
+        let codex = MenuBarSelection.selectedOption(provider: .codex,
+            options: codexManager?.snapshot?.menuBarOptions ?? [],
+            selectionID: menuBarPreferences.selectionID(for: .codex))?.percent
+        let claude = MenuBarSelection.selectedOption(provider: .claude,
+            options: usageManager?.menuBarOptions ?? [],
+            selectionID: menuBarPreferences.selectionID(for: .claude))?.percent
         let entries = MenuBarStatus.entries(claude: claude, codex: codex)
         button.title = ""
         button.image = MenuBarStatus.image(for: entries)
@@ -594,15 +611,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openPopover() {
+        guard !popover.isShown else { return }
         if let button = statusItem.button {
             // Force UI refresh by updating percentages
             DispatchQueue.main.async {
                 self.usageManager.updatePercentages()
             }
 
+            updatePopupScreenBounds()
+            popupPresentation.beginPresentation()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
             // Add event monitor to detect clicks outside the popover
+            removePopoverEventMonitor()
             eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 if self?.popover.isShown == true {
                     self?.closePopover()
@@ -613,7 +634,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func closePopover() {
         popover.performClose(nil)
+        removePopoverEventMonitor()
+    }
 
+    func popoverDidShow(_ notification: Notification) {
+        updatePopupScreenBounds()
+        // A retained hosting controller does not necessarily receive onAppear
+        // again. Signal each actual presentation after its window is attached.
+        popupPresentation.beginPresentation()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        removePopoverEventMonitor()
+    }
+
+    @objc func updatePopupScreenBounds() {
+        guard let button = statusItem.button, let anchorWindow = button.window,
+              let screen = anchorWindow.screen else { return }
+        let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let visible = screen.visibleFrame
+        // Reserve native arrow/border space before first presentation, then use
+        // the actual decoration height when a popover window is available.
+        var chrome: CGFloat = 32
+        if popover.isShown, let view = popover.contentViewController?.view, let window = view.window {
+            chrome = max(chrome, window.frame.height - view.bounds.height)
+        }
+        let heightBelowAnchor = min(visible.maxY, anchor.minY) - visible.minY
+        popupPresentation.constrain(availableHeight: max(1, heightBelowAnchor - chrome))
+    }
+
+    private func removePopoverEventMonitor() {
         // Remove event monitor
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
@@ -651,6 +701,7 @@ struct Main {
 #endif
 
 class UsageManager: ObservableObject {
+    @Published private(set) var menuBarOptions: [MenuBarWindowOption] = []
     @Published var sessionUsage: Int = 0
     @Published var sessionUtilization: Double = 0
     @Published var sessionLimit: Int = 100
@@ -944,6 +995,7 @@ class UsageManager: ObservableObject {
     }
 
     private func resetUsageData() {
+        menuBarOptions = []
         // Reset all data when credentials change so accounts never share usage state.
         sessionUsage = 0
         sessionUtilization = 0
@@ -1213,6 +1265,7 @@ class UsageManager: ObservableObject {
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     self?.errorMessage = "Invalid response"
+                    self?.menuBarOptions = []
                     AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
                     self?.updateStatusBar()
                     return
@@ -1225,6 +1278,7 @@ class UsageManager: ObservableObject {
                     self?.parseUsageData(data)
                 } else {
                     self?.errorMessage = "HTTP \(httpResponse.statusCode)"
+                    self?.menuBarOptions = []
                     AppDiagnostics.shared.recordFailure(provider: .claude,
                         code: [401, 403].contains(httpResponse.statusCode) ? .signIn : .protocolFailure)
                 }
@@ -1235,6 +1289,8 @@ class UsageManager: ObservableObject {
     }
 
     func parseUsageData(_ data: Data) {
+        menuBarOptions = []
+        defer { delegate?.updateSelectedProviderIcon() }
         // Every response must establish fresh adaptive state, including invalid JSON.
         sessionUtilization = 0
         sessionUsage = 0
@@ -1278,9 +1334,13 @@ class UsageManager: ObservableObject {
             sessionUsage = Int(sessionUtil)
             sessionLimit = 100
             sessionResetsAt = resetDate(fiveHour["resets_at"])
+            var availableWindows = [MenuBarWindowOption(id: "claude:five_hour", provider: .claude,
+                label: "Session · 5h", percent: sessionUtil, durationMinutes: 300, isPreferredBucket: true)]
 
             if let sevenDay = json["seven_day"] as? [String: Any] {
                 if let weeklyUtil = percentage(sevenDay["utilization"]) {
+                    availableWindows.append(MenuBarWindowOption(id: "claude:seven_day", provider: .claude,
+                        label: "Weekly · 7d", percent: weeklyUtil, durationMinutes: 10080, isPreferredBucket: true))
                     weeklyUsage = Int(weeklyUtil)
                     weeklyLimit = 100
                 }
@@ -1299,6 +1359,8 @@ class UsageManager: ObservableObject {
             if let sevenDaySonnet = json["seven_day_sonnet"] as? [String: Any] {
                 hasWeeklySonnet = true
                 if let sonnetUtil = percentage(sevenDaySonnet["utilization"]) {
+                    availableWindows.append(MenuBarWindowOption(id: "claude:seven_day_sonnet", provider: .claude,
+                        label: "Sonnet · 7d", percent: sonnetUtil, durationMinutes: 10080, isPreferredBucket: false))
                     weeklySonnetUsage = Int(sonnetUtil)
                     weeklySonnetLimit = 100
                 }
@@ -1330,6 +1392,8 @@ class UsageManager: ObservableObject {
                     hasWeeklyFable = true
                     // `percent` may decode as Int or Double depending on payload.
                     if let p = percentage(fable["percent"]) {
+                        availableWindows.append(MenuBarWindowOption(id: "claude:seven_day_fable", provider: .claude,
+                            label: "Fable · 7d", percent: p, durationMinutes: 10080, isPreferredBucket: false))
                         weeklyFableUsage = Int(p)
                     }
                     weeklyFableLimit = 100
@@ -1353,6 +1417,7 @@ class UsageManager: ObservableObject {
             lastUpdated = Date()
             errorMessage = nil
             hasFetchedData = true
+            menuBarOptions = availableWindows
             AppDiagnostics.shared.recordRecovery(provider: .claude)
 
             // Update percentage values for progress bars
@@ -2033,24 +2098,22 @@ struct UsageView: View {
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
     @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
+    @ObservedObject var popupPresentation: PopupPresentation = PopupPresentation()
+    @ObservedObject var menuBarPreferences: MenuBarPreferences = MenuBarPreferences()
     // Lets the offline preview renderer capture the Settings page.
     var startsInSettings = false
     @State private var sessionCookieInput: String = ""
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingStatusDetails: Bool = false
-    @State private var measuredHeight: CGFloat = 250
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance_mode") private var appearanceMode: String = "system"
     @State private var diagnosticsEnabled = AppDiagnostics.shared.enabled
-
-    private let maxPopupHeight: CGFloat = 600
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Color.clear.frame(height: 0).id("top")
                     if showingSettings {
                         settingsPage
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -2060,25 +2123,38 @@ struct UsageView: View {
                     }
                 }
                     .padding(14)
+                    .id("top")
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
                         }
                     )
             }
-            .frame(width: 360, height: min(max(measuredHeight, 100), maxPopupHeight))
+            .frame(width: 360, height: popupPresentation.viewportHeight)
             .background(popupBackground)
             .onPreferenceChange(ContentHeightKey.self) { value in
-                guard value > 0 else { return }
-                measuredHeight = value
+                popupPresentation.measure(contentHeight: value)
             }
             .onAppear {
                 usageManager.updatePercentages()
                 if startsInSettings { showingSettings = true }
             }
             .onChange(of: showingSettings) { _ in
-                proxy.scrollTo("top", anchor: .top)
+                resetScroll(proxy)
             }
+            .onChange(of: popupPresentation.opening) { _ in
+                resetScroll(proxy)
+            }
+        }
+    }
+
+    private func resetScroll(_ proxy: ScrollViewProxy) {
+        // Wait for the new page/document bounds before resolving its top anchor.
+        // Keep all account, settings and text-entry state in the retained view.
+        DispatchQueue.main.async {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { proxy.scrollTo("top", anchor: .top) }
         }
     }
 
@@ -2560,6 +2636,11 @@ struct UsageView: View {
                 CodexAccountSettings(manager: codexManager)
             }
 
+            settingsCard("Menu bar usage") {
+                menuBarSelector(provider: .claude, options: usageManager.menuBarOptions)
+                menuBarSelector(provider: .codex, options: codexManager.snapshot?.menuBarOptions ?? [])
+            }
+
             settingsCard("General") {
                 settingToggle("Send crash and error reports", detail: "Helps improve LimitFuel using Sentry. Excludes credentials, account details and application logs.", isOn: Binding(
                     get: { diagnosticsEnabled },
@@ -2648,6 +2729,34 @@ struct UsageView: View {
                 .foregroundColor(Color.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
+        }
+    }
+
+    private func menuBarSelector(provider: MenuBarProvider, options: [MenuBarWindowOption]) -> some View {
+        let valid = options.filter { $0.percent.isFinite && (0...100).contains($0.percent) }
+        let selectedID = menuBarPreferences.selectionID(for: provider)
+        let unavailable = selectedID != MenuBarSelection.automaticID && !valid.contains { $0.id == selectedID }
+        return VStack(alignment: .leading, spacing: 4) {
+            Picker(provider == .claude ? "Claude" : "Codex", selection: Binding(
+                get: { menuBarPreferences.selectionID(for: provider) },
+                set: { menuBarPreferences.select($0, for: provider) }
+            )) {
+                Text("Automatic (session preferred)").tag(MenuBarSelection.automaticID)
+                ForEach(valid) { option in
+                    Text(option.label).tag(option.id)
+                }
+                if unavailable {
+                    Text("Saved window unavailable").tag(selectedID)
+                }
+            }
+            .pickerStyle(.menu)
+            .font(.caption)
+            if unavailable {
+                Text("Using Automatic until your saved window returns.")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

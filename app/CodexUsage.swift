@@ -3,6 +3,7 @@ import Combine
 import AppKit
 import Darwin
 import CoreFoundation
+import CryptoKit
 
 struct CodexWindow: Equatable {
     let usedPercent: Double
@@ -10,16 +11,53 @@ struct CodexWindow: Equatable {
     let resetsAt: Date?
 }
 
+struct CodexDisplayWindow: Identifiable {
+    let id: String
+    let window: CodexWindow
+}
+
 struct CodexBucket: Identifiable {
     let id: String
     let name: String
     let primary: CodexWindow?
     let secondary: CodexWindow?
+
+    var displayWindows: [CodexDisplayWindow] {
+        [primary.map { CodexDisplayWindow(id: "primary", window: $0) },
+         secondary.map { CodexDisplayWindow(id: "secondary", window: $0) }].compactMap { $0 }
+    }
 }
 
 struct CodexSnapshot {
     let accountLabel: String?
     let buckets: [CodexBucket]
+
+    var menuBarPercent: Double? {
+        MenuBarSelection.selectedOption(provider: .codex, options: menuBarOptions, selectionID: nil)?.percent
+    }
+
+    var menuBarOptions: [MenuBarWindowOption] {
+        let nameCounts = Dictionary(grouping: buckets, by: \.name).mapValues { $0.count }
+        return buckets.flatMap { bucket in
+            let name = (nameCounts[bucket.name] ?? 0) > 1 ? "\(bucket.name) (\(bucket.id))" : bucket.name
+            return bucket.displayWindows.map { entry in
+                let duration: String
+                if let minutes = entry.window.windowDurationMins {
+                    if minutes > 0 && minutes % 1440 == 0 { duration = "\(minutes / 1440)d" }
+                    else if minutes > 0 && minutes % 60 == 0 { duration = "\(minutes / 60)h" }
+                    else { duration = "\(minutes)m" }
+                } else { duration = "duration unavailable" }
+                let role = entry.id == "primary" ? "Primary" : "Secondary"
+                // Digest the exact UTF-8 bytes so delimiters and Unicode cannot
+                // alias roles, and unusually long graphemes cannot exceed the
+                // preference ID limit. Labels/order/account names are excluded.
+                let bucketID = SHA256.hash(data: Data(bucket.id.utf8)).map { String(format: "%02x", $0) }.joined()
+                return MenuBarWindowOption(id: "codex:\(bucketID):\(entry.id)", provider: .codex,
+                    label: "\(name) · \(role) · \(duration)", percent: entry.window.usedPercent,
+                    durationMinutes: entry.window.windowDurationMins, isPreferredBucket: bucket.id == "codex")
+            }
+        }
+    }
 }
 
 enum CodexUsageError: LocalizedError {

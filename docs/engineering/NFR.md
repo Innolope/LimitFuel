@@ -14,6 +14,13 @@ Read with the active plan before engineering changes.
 - Codex uses its installed app-server and own sign-in. Only read-only account and
   rate-limit RPCs; 20-second child deadline, forced cleanup, 1MiB output and 64 buckets.
 - LimitFuel retains com.claude.usagebar for settings migration.
+- Popup native and SwiftUI viewport sizes agree, fit the status-item screen, and
+  reopen at the top. Tall content stays scrollable; unavailable usage rows are omitted.
+- Menu bar shows one percentage per connected provider, with independent persisted
+  bucket/window selection in Settings and a session-first default. Missing selections
+  fall back without destroying the saved ID; current account data alone supplies usage.
+- Menu bar uses the app mark only while disconnected, and connected provider
+  marks with percentages otherwise. Preserve0%, accessible labels and1x/2x templates.
 - Existing manual credentials/settings survive upgrades; manual save/clear stops
   hourly imports until explicitly enabled again.
 - Test with disposable fixtures only, covering encryption, WAL and failure paths.

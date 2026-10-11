@@ -27,26 +27,48 @@ python3 "$REPO/Tests/BoundedCommandTests.py"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/acceptance-tests"
 
 "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" -lsqlite3 \
-  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/UsageManagerTests.swift" -o "$BUILD/lifecycle-tests"
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/app/PopupLayout.swift" "$REPO/app/MenuBarPreferences.swift" "$REPO/Tests/UsageManagerTests.swift" -o "$BUILD/lifecycle-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/lifecycle-tests"
 "$SWIFTC" -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/MenuBarStatusTests.swift" -o "$BUILD/menubar-tests"
 "$BUILD/menubar-tests"
 
-"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" "$REPO/app/CodexUsage.swift" "$REPO/Tests/CodexUsageTests.swift" -o "$BUILD/codex-tests"
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/app/MenuBarPreferences.swift" "$REPO/app/CodexUsage.swift" "$REPO/Tests/CodexUsageTests.swift" -o "$BUILD/codex-tests"
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/app/MenuBarPreferences.swift" "$REPO/app/CodexUsage.swift" \
+  "$REPO/Tests/CodexMenuSelectionTests.swift" -o "$BUILD/codex-menu-selection-tests"
+"$BUILD/codex-menu-selection-tests"
 "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" -isysroot "$SDK" "$REPO/Tests/CodexDescendantFixture.c" -o "$BUILD/codex-descendant-fixture"
 CLAUDE_TEST_TMPDIR="$BUILD" CLAUDE_CODEX_DESCENDANT_FIXTURE="$BUILD/codex-descendant-fixture" "$BUILD/codex-tests"
 
 # Frozen spec-only desktop repair acceptance, using synthetic local fixtures.
 for CASE in Chrome Codex Menu; do
     case "$CASE" in
-        Chrome) SOURCE=ChromeCookies; EXTRA=-lsqlite3 ;;
-        Codex) SOURCE=CodexUsage; EXTRA= ;;
-        Menu) SOURCE=MenuBarStatus; EXTRA= ;;
+        Chrome) SOURCE=ChromeCookies; EXTRA=-lsqlite3; set -- ;;
+        Codex) SOURCE=CodexUsage; EXTRA=; set -- "$REPO/app/MenuBarStatus.swift" "$REPO/app/MenuBarPreferences.swift" ;;
+        Menu) SOURCE=MenuBarStatus; EXTRA=; set -- ;;
     esac
     "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" ${EXTRA} \
-      "$REPO/app/$SOURCE.swift" "$REPO/Tests/Desktop${CASE}Tests.swift" -o "$BUILD/desktop-$CASE"
-    CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/desktop-$CASE"
+      "$@" "$REPO/app/$SOURCE.swift" "$REPO/Tests/Desktop${CASE}Tests.swift" -o "$BUILD/desktop-$CASE"
+    CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/desktop-$CASE"
 done
+
+# Frozen popup/provider display acceptance: deterministic geometry and PDF marks.
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/app/MenuBarPreferences.swift" "$REPO/app/CodexUsage.swift" \
+  "$REPO/app/PopupLayout.swift" "$REPO/Tests/PopupAcceptanceTests.swift" -o "$BUILD/popup-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/popup-tests"
+
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/app/MenuBarPreferences.swift" \
+  "$REPO/app/CodexUsage.swift" "$REPO/Tests/MenuPreferencesAcceptance.swift" -o "$BUILD/menu-preferences-tests"
+"$BUILD/menu-preferences-tests"
+
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" -lsqlite3 \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" \
+  "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" \
+  "$REPO/app/PopupLayout.swift" "$REPO/app/MenuBarPreferences.swift" \
+  "$REPO/Tests/MenuPreferencesIntegrationTests.swift" -o "$BUILD/menu-preferences-integration-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/menu-preferences-integration-tests"
 
 "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
   "$REPO/app/AppDiagnostics.swift" "$REPO/Tests/DiagnosticsTests.swift" -o "$BUILD/diagnostics-tests"
