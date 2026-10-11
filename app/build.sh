@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$SCRIPT_DIR"
 
 # Build script for LimitFuel
 
@@ -11,6 +13,34 @@ case "${1:-}" in
     "") ;;
     *) echo "Usage: ./build.sh [--local]" >&2; exit 2 ;;
 esac
+if [ "$#" -gt 1 ]; then echo "Usage: ./build.sh [--local]" >&2; exit 2; fi
+if ! mkdir .release-lock 2>/dev/null; then
+    echo "Another build/release owns .release-lock" >&2
+    exit 1
+fi
+ACTIVE_COMMAND=""
+cleanup() {
+    if [ -n "$ACTIVE_COMMAND" ]; then
+        kill -TERM "$ACTIVE_COMMAND" 2>/dev/null || true
+        wait "$ACTIVE_COMMAND" 2>/dev/null || true
+    fi
+    rmdir .release-lock
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+run_bounded() {
+    python3 scripts/run_bounded.py "$@" &
+    ACTIVE_COMMAND=$!
+    if wait "$ACTIVE_COMMAND"; then result=0; else result=$?; fi
+    ACTIVE_COMMAND=""
+    return "$result"
+}
+
+DEVELOPER_ID=${DEVELOPER_ID-Developer ID Application: Innolope LLC (MQD26CY5MA)}
+if ! $LOCAL_BUILD; then
+    python3 scripts/build_info.py --check-identity "$DEVELOPER_ID"
+fi
 
 # Create fresh build directory (delete any stale build to avoid accumulated xattrs
 # from prior signs, which can cause "resource fork / detritus" errors on codesign).
@@ -26,6 +56,8 @@ mkdir -p "$APP_PATH/Contents/Resources"
 
 # Copy Info.plist
 cp Info.plist "$APP_PATH/Contents/"
+cp Assets/*.pdf "$APP_PATH/Contents/Resources/"
+python3 scripts/build_info.py "$APP_PATH"
 
 # Create icon if it doesn't exist
 if [ ! -f "LimitFuel.icns" ]; then
@@ -42,9 +74,9 @@ if [ -f "LimitFuel.icns" ]; then
 fi
 
 # Compile the Swift app for arm64
-swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
+run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift \
     -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \
@@ -52,9 +84,9 @@ swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
     -target arm64-apple-macos12.0
 
 # Compile for x86_64 (Intel)
-swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
+run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift \
     -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \
@@ -62,7 +94,7 @@ swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
     -target x86_64-apple-macos12.0
 
 # Create universal binary
-lipo -create -output "$APP_PATH/Contents/MacOS/LimitFuel" \
+run_bounded 120 lipo -create -output "$APP_PATH/Contents/MacOS/LimitFuel" \
     "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
     "$APP_PATH/Contents/MacOS/LimitFuel_x86_64"
 
@@ -77,26 +109,26 @@ echo -n "APPL????" > "$APP_PATH/Contents/PkgInfo"
 chmod 755 "$APP_PATH/Contents/MacOS/LimitFuel"
 
 # Clean any "detritus" that codesign rejects: extended attributes, ._files, .DS_Store
-xattr -cr "$APP_PATH"
+run_bounded 120 xattr -cr "$APP_PATH"
 find "$APP_PATH" -name '._*' -delete 2>/dev/null
 find "$APP_PATH" -name '.DS_Store' -delete 2>/dev/null
-dot_clean "$APP_PATH" 2>/dev/null
+run_bounded 120 dot_clean "$APP_PATH" 2>/dev/null
+python3 scripts/build_info.py "$APP_PATH" --verify
 
 # Explicit local builds use an ad-hoc signature and do not launch automatically.
 # Distribution builds require Developer ID and never fall back to ad-hoc.
 if $LOCAL_BUILD; then
-    codesign --force --deep --sign - "$APP_PATH"
-    codesign --verify --deep --strict "$APP_PATH"
+    run_bounded 120 codesign --force --deep --sign - "$APP_PATH"
+    run_bounded 120 codesign --verify --deep --strict "$APP_PATH"
     echo "Local universal app built: $APP_PATH (ad-hoc signed, not notarized)"
     exit 0
 fi
 
 # Sign with Developer ID certificate. NEVER silently fall back to ad-hoc — that
 # fails notarization later. If real signing fails, error out loudly.
-DEVELOPER_ID="Developer ID Application: Linkko Technology Pte Ltd (Q467HQ5432)"
-if codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"; then
+if run_bounded 120 codesign --force --deep --options runtime --timestamp --sign "$DEVELOPER_ID" "$APP_PATH"; then
     echo "✅ App signed with Developer ID"
-    if codesign --verify --verbose=2 "$APP_PATH" 2>&1 | grep -q "valid on disk"; then
+    if run_bounded 120 codesign --verify --deep --strict "$APP_PATH"; then
         echo "✅ Signature verified"
     else
         echo "❌ Signature verification failed — fix before shipping" >&2
@@ -110,5 +142,4 @@ fi
 
 echo "Build successful!"
 echo "App bundle created at: $APP_PATH"
-echo "Launching app..."
-open "$APP_PATH"
+echo "Run ./create_dmg.sh explicitly to notarize and package a release."

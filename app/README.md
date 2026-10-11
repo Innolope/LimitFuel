@@ -7,7 +7,7 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 ## ✨ Features
 
 - 🟢 **Real-time Usage Tracking**: Monitor session (5-hour) and weekly (7-day) usage
-- 🎨 **Color-Coded Menu Bar Icon**: Visual indication of usage levels (green/yellow/red)
+- 🎨 **Monochrome Provider Icons**: Claude and OpenAI marks with separate usage percentages; unavailable providers are hidden
 - 🔔 **Smart Notifications**: Alerts at 25%, 50%, 75%, and 90% usage thresholds
 - ⚡ **Auto-Refresh**: Every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex**: Separate provider tab with metered buckets, window durations and reset times
@@ -19,7 +19,7 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 ## 🖼️ Screenshots
 
 **Menu Bar Display:**
-- Shows current session percentage with color-coded emoji
+- Shows each connected provider's current usage percentage beside its monochrome mark
 - Example: `🟢 45%` (green < 70%, yellow 70-90%, red > 90%)
 
 **Popup Interface:**

@@ -3,6 +3,8 @@ set -eu
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO"
 bash -n app/build.sh
+bash -n app/create_dmg.sh
+python3 -c 'import ast,pathlib; [ast.parse(p.read_text()) for p in pathlib.Path("app/scripts").glob("*.py")]'
 sh -n Tests/run.sh
 sh -n Tests/lint.sh
 plutil -lint app/Info.plist

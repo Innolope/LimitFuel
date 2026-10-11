@@ -63,6 +63,21 @@ tmp/
 temp/
 .vercel
 .env*.local
+.env.*
+!.env.example
+*.local.env
+*.local.sh
+*.p12
+*.p8
+*.key
+*.pem
+*.keychain
+*.keychain-db
+*.mobileprovision
+*.provisionprofile
+__pycache__/
+app/dist/
+app/.release-lock/
 
 # Internal docs (kept local, not on public GitHub)
 NOTIFICATIONS.md

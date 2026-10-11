@@ -84,3 +84,57 @@ and Codex usage tracking, 60-second normal / 12-second high five-hour polling, a
 - Rename: executable, app bundle, source/icon filenames, visible branding and
   fork repository now use LimitFuel. Bundle identifier and credential/settings
   keys remain stable. Fork update metadata is separate from upstream releases.
+
+## Release preparation and dual menu bar (2026-10-11)
+
+- User authorized updating the PR without secrets and explicitly chose both
+  providers, then monochrome Claude/OpenAI marks and hiding missing providers.
+- Release workflow uses public Innolope identity/profile names and Keychain-only
+  notary authentication. No TeleCRM environment file, password or private key was
+  copied. Ignore checks cover environment files, local wrappers, signing keys,
+  certificates, provisioning profiles and generated output.
+- Fresh spec-only gpt-6.1-sol authors wrote release and menu bar acceptance tests
+  before implementation, with no inherited chat or production-source reads.
+  This is context separation; filesystem isolation is not enforced.
+- Complete Tests/run.sh passed: prior 887 assertions plus 12 release methods,
+  6 bounded-command methods, 625 menu fixture pairs, 256 generated pairs (seed
+  0x4C494D4954), 64 state transitions and 8 rendered snapshots. Tests/lint.sh passed.
+- Release fixtures inject signing, packaging, notary status, malformed/oversized
+  output, timeout, staple and Gatekeeper failures. Concurrency checks preserve the
+  owner's lock. Timeout instrumentation measures subprocess launch using standard
+  audit events, retaining the deadline and exactly-one-attempt assertions when a
+  child is killed before its executable body starts. Seed 20261011, bounded local
+  fixtures only. Live load/Apple fault testing is inapplicable to offline preparation.
+- A disposable Accepted-guard mutant published a Rejected result; the frozen
+  negative test failed as intended. Later subcases inherited that mutant output;
+  they are not counted as independent mutation detections. Production guard remains.
+- Light/dark menu previews visually checked both, either, neither, 0% and 100%:
+  vector provider marks, readable percentages, no opaque backgrounds or clipping.
+  Empty state keeps a generic gauge and reachable popup; no invented 0% provider.
+- Finder reproduced a signing child/lock surviving a TERM sent to the intermediate
+  build shell. The bounded runner and background wait now propagate cancellation
+  and clean up process groups. Independent verifier observed TERM exit143 in
+  0.067s and INT exit130 in 0.124s, lock removal and no delayed descendant write;
+  a disposable 1-second signing deadline also cleaned up. A direct-foreground
+  counterexample retained shell/lock and permitted the delayed write. An exact
+  historical intermediate snapshot was unavailable to that verifier.
+- Universal local app compiled for arm64/x86_64 and passed strict ad-hoc signature
+  verification. The build used explicit SDKROOT/toolchain paths; the system Python
+  shim emitted cache-permission diagnostics but exited successfully. No distribution
+  signing was exercised. Mandatory commit hook and hosted CI are separate checks.
+- Local fixtures do not prove real signing, notarization or App Store acceptance.
+  No Apple upload, installation, publication, console record or sandbox redesign
+  was performed. The app icon concept board is preview-only, awaiting user selection.
+- Commit-hook attempts blocked on tests exit1, while a direct configured gate
+  passed. Retained test transcripts exposed the timeout fixture's cross-process
+  clock calculation: macOS Python 3.9 and 3.14 use incompatible monotonic clock
+  references. The independent test author changed both timestamp reads to POSIX
+  CLOCK_MONOTONIC. A separate verifier confirmed exactly two clock substitutions,
+  unchanged one-second deadline, <4.5-second elapsed limit and exactly-one-attempt,
+  unknown-outcome, cleanup and no-artifact assertions. Isolated timeout checks pass
+  under Python 3.9, Python 3.14 and a fully Python 3.9 subprocess PATH. See
+  [Python's clock documentation](https://docs.python.org/3/library/time.html#time.monotonic).
+  Failed hook runs are not counted as passing verification. Tests/run.sh retains
+  failed transcripts without changing checks or exit codes. Native NSStatusBar
+  integration exits before its completion marker in this tool context, so it
+  remains unverified.

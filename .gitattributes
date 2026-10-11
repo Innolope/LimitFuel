@@ -1,0 +1,2 @@
+# PDF vector assets have format-significant whitespace; review their SVG sources.
+app/Assets/*.pdf binary

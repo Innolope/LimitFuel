@@ -28,7 +28,7 @@ or remote debugging is required.
 ## ✨ Features
 
 - 🟢 **Real-time usage tracking** - Monitor session (5-hour) and weekly (7-day) limits
-- 🎨 **Color-coded menu bar icon** - Visual spark icon that changes color (green/yellow/red)
+- 🎨 **Compact menu bar display** - Monochrome Claude/OpenAI marks with independent percentages; unavailable providers stay hidden
 - 🔔 **Smart notifications** - Alerts at 25%, 50%, 75%, 90% usage thresholds
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
@@ -51,7 +51,7 @@ or remote debugging is required.
 
 **Menu Bar Display:**
 ```
-⚡ 45%  (Green spark icon when usage < 70%)
+Claude mark 45%   OpenAI mark 82%  (only connected providers appear)
 ```
 
 **Popup Interface:**
@@ -80,8 +80,10 @@ chmod +x build.sh
 ./build.sh --local
 ```
 
-The built app will be in `app/build/LimitFuel.app`. The default build requires
-the upstream distribution certificate; use `./build.sh --local` for this fork.
+The built app will be in `app/build/LimitFuel.app`. The default build uses Innolope's
+Developer ID identity; use `./build.sh --local` without a distribution certificate.
+See [distribution instructions](docs/DISTRIBUTION.md) for Keychain-based notarization
+and the separate Mac App Store requirements. No credentials belong in Git.
 
 For a local ad-hoc signed build without a distribution certificate, run
 `./build.sh --local`; this builds both architectures and does not launch the app.

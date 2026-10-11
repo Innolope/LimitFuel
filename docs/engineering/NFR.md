@@ -20,5 +20,8 @@ Read with the active plan before engineering changes.
 - Local checks: Tests/run.sh, Tests/lint.sh and universal app compile. No project
   checks existed initially; .codex/quality-gates.json configures the existing
   personal commit hook. Hosted CI and branch protections are separate gates.
-- Undecided: distribution signing identity, notarization/release ownership, hosted
+- Distribution defaults to Innolope Developer ID; secrets stay in Keychain/local
+  ignored files. Packaging requires Accepted notarization, stapling and Gatekeeper;
+  publish only fully verified artifacts with clean source provenance. No auto-retry.
+- Undecided: release publication ownership, App Store sandbox design, hosted
   branch protections, nonstandard Chrome data directories and Chrome channels.
