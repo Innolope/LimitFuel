@@ -27,6 +27,8 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 - Plain reset text follows a centered dot, for example `81% · 6d`, using one unit:
   days, hours, or minutes. Unknown reset times omit the countdown and separator
   while preserving the percentage.
+- Hours advance from minute 45 (`4h45m` → `5h`); days round up from 12 hours
+  (`1d12h` → `2d`). Below one day use hours; below one hour use minutes.
 - Temporary refresh failures retain last-known values. Text gradually blurs from
   ten to thirty minutes without a successful provider update; exact values and
   update age remain in tooltips. Increase Contrast or Reduce Transparency disables blur.

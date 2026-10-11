@@ -63,6 +63,9 @@ The percentages show remaining capacity by default. In Settings → Menu bar
 usage, turn off **Show remaining percentage** to show used capacity. Reset time
 follows a centered dot, for example `81% · 6d`, using days, hours, or minutes.
 Unknown reset times omit the countdown and separator. Tooltips identify the percentage meaning.
+Hours advance to the next number from minute 45 onward (`4h45m` → `5h`);
+days round up from 12 hours (`1d12h` → `2d`). Below one day use hours,
+and below one hour use minutes.
 
 Temporary refresh failures keep the last successful value visible. After ten
 minutes without a successful update, that provider's numbers gradually blur,
