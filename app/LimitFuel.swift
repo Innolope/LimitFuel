@@ -14,23 +14,314 @@ extension Color {
     })
 }
 
-// Deterministic usage bar: the native linear ProgressView ignores .tint() in
-// light (aqua) and vibrant rendering and falls back to accent blue.
+// MARK: - Popup design system
+
+// Provider colors, matching the two rows of the app icon.
+enum Brand {
+    static let claude = Color(red: 1.0, green: 0.541, blue: 0.239)  // #ff8a3d
+    static let codex = Color(red: 0.184, green: 0.816, blue: 0.769)  // #2fd0c4
+    static let warning = Color(red: 1.0, green: 0.769, blue: 0.0)    // #ffc400
+    static let critical = Color(red: 1.0, green: 0.271, blue: 0.227) // #ff453a
+}
+
+// Provider color while there is headroom; amber from 70%, red from 90%.
+func meterColor(_ fraction: Double, base: Color) -> Color {
+    fraction >= 0.9 ? Brand.critical : fraction >= 0.7 ? Brand.warning : base
+}
+
+private func litSegments(_ fraction: Double, of segments: Int) -> Int {
+    let clamped = max(0, min(1, fraction))
+    // Any usage lights the first segment, so 1% never reads as empty.
+    return clamped <= 0 ? 0 : min(segments, Int((clamped * Double(segments) - 1e-9).rounded(.up)))
+}
+
+// Usage meter drawn as a row of LED segments, like the app icon. Hand-drawn
+// because the native linear ProgressView ignores .tint() in light (aqua) and
+// vibrant rendering and falls back to accent blue.
 struct UsageBar: View {
     let value: Double
     let color: Color
+    var segments: Int = 30
+    var height: CGFloat = 6
+    var glow = false
+
+    var body: some View {
+        let lit = litSegments(value, of: segments)
+        HStack(spacing: 2) {
+            ForEach(0..<segments, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(index < lit ? color : Color.primary.opacity(0.1))
+                    .shadow(color: glow && index < lit ? color.opacity(0.55) : .clear, radius: 3)
+            }
+        }
+        .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityValue("\(Int(max(0, min(1, value)) * 100)) percent used")
+    }
+}
+
+// One usage limit: name, big percentage, glowing segment meter and reset time.
+struct MeterRow: View {
+    let title: String
+    let subtitle: String?
+    let percent: Int?
+    let fraction: Double
+    let color: Color
+    let footnote: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text(percent.map { "\($0)" } ?? "–")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    if percent != nil {
+                        Text("%")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(Color.secondaryText)
+                    }
+                }
+            }
+            UsageBar(value: percent == nil ? 0 : fraction, color: color, height: 8, glow: true)
+            if let footnote = footnote {
+                Label(footnote, systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.secondaryText)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct ProviderHeader: View {
+    let name: String
+    let color: Color
+    let detail: String?
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+                .shadow(color: color.opacity(0.8), radius: 4)
+            Text(name)
+                .font(.system(size: 13, weight: .semibold))
+            Spacer(minLength: 8)
+            if let detail = detail {
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+}
+
+// The app icon in miniature: a dark tile with two rows of five segments.
+struct BrandGlyph: View {
+    var size: CGFloat = 22
+
+    var body: some View {
+        let unit = size / 100
+        ZStack {
+            RoundedRectangle(cornerRadius: 22.5 * unit, style: .continuous)
+                .fill(LinearGradient(colors: [Color(white: 0.13), Color(white: 0.04)],
+                                     startPoint: .top, endPoint: .bottom))
+            VStack(spacing: 10 * unit) {
+                row(lit: 4, color: Brand.claude, unit: unit)
+                row(lit: 2, color: Brand.codex, unit: unit)
+            }
+        }
+        .frame(width: size, height: size)
+        .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+        .accessibilityHidden(true)
+    }
+
+    private func row(lit: Int, color: Color, unit: CGFloat) -> some View {
+        HStack(spacing: 3 * unit) {
+            ForEach(0..<5, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 3 * unit, style: .continuous)
+                    .fill(index < lit ? color : Color(white: 0.21))
+                    .frame(width: 10.4 * unit, height: 18 * unit)
+            }
+        }
+    }
+}
+
+// Soft provider-colored light behind the cards: Claude orange near the top,
+// Codex teal lower down, matching the order of the cards.
+struct AmbientBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.12))
-                Capsule()
-                    .fill(color)
-                    .frame(width: max(0, min(1, value)) * geo.size.width)
+            let w = geo.size.width, h = geo.size.height
+            let strength = colorScheme == .dark ? 0.42 : 0.30
+            ZStack {
+                glow(Brand.claude, strength: strength, radius: w * 0.75)
+                    .position(x: w * 0.1, y: min(h * 0.12, 90))
+                glow(Brand.codex, strength: strength * 0.9, radius: w * 0.75)
+                    .position(x: w * 0.95, y: h * 0.7)
             }
         }
-        .frame(height: 6)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
+
+    // A radial gradient rather than a blurred shape: same softness, and it
+    // renders identically in offscreen previews, which ignore blur filters.
+    private func glow(_ color: Color, strength: Double, radius: CGFloat) -> some View {
+        Circle()
+            .fill(RadialGradient(colors: [color.opacity(strength), color.opacity(strength * 0.35), color.opacity(0)],
+                                 center: .center, startRadius: 0, endRadius: radius))
+            .frame(width: radius * 2, height: radius * 2)
+    }
+}
+
+// Liquid Glass on macOS 26 when built with the macOS 26 SDK; elsewhere a frosted
+// material with a light rim. LEGACY_GLASS forces the fallback (preview renders).
+struct GlassSurface<S: InsettableShape>: ViewModifier {
+    let shape: S
+    var tint: Color? = nil
+    var interactive = false
+
+    func body(content: Content) -> some View {
+        surface(content)
+    }
+
+#if compiler(>=6.2) && !LEGACY_GLASS
+    @ViewBuilder
+    private func surface(_ content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(Glass.regular.tint(tint.map { $0.opacity(0.22) }).interactive(interactive), in: shape)
+        } else {
+            frosted(content)
+        }
+    }
+#else
+    private func surface(_ content: Content) -> some View {
+        frosted(content)
+    }
+#endif
+
+    private func frosted(_ content: Content) -> some View {
+        content
+            .background(
+                ZStack {
+                    shape.fill(.ultraThinMaterial)
+                    if let tint = tint {
+                        shape.fill(tint.opacity(0.14))
+                    }
+                }
+            )
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(colors: [Color.white.opacity(0.42), Color.white.opacity(0.06)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.1), radius: 10, y: 4)
+    }
+}
+
+extension View {
+    func glassCard(tint: Color? = nil, padding: CGFloat = 14) -> some View {
+        self
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(GlassSurface(shape: RoundedRectangle(cornerRadius: 18, style: .continuous), tint: tint))
+    }
+
+#if compiler(>=6.2) && !LEGACY_GLASS
+    @ViewBuilder
+    func prominentButton(tint: Color) -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glassProminent).tint(tint)
+        } else {
+            self.buttonStyle(.borderedProminent).tint(tint)
+        }
+    }
+
+    @ViewBuilder
+    func secondaryButton() -> some View {
+        if #available(macOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+#else
+    func prominentButton(tint: Color) -> some View {
+        self.buttonStyle(.borderedProminent).tint(tint)
+    }
+
+    func secondaryButton() -> some View {
+        self.buttonStyle(.bordered)
+    }
+#endif
+}
+
+var usesSystemGlass: Bool {
+#if compiler(>=6.2) && !LEGACY_GLASS
+    if #available(macOS 26.0, *) { return true }
+#endif
+    return false
+}
+
+struct GlassIconButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(Color.primary.opacity(0.75))
+        .modifier(GlassSurface(shape: Circle(), interactive: true))
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+struct WarningNote: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(Brand.warning)
+            Text(text)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// "3h 12m · Sat 14:43": time left until the reset, then its local time.
+func resetDescription(_ date: Date, now: Date = Date()) -> String {
+    let seconds = Int(date.timeIntervalSince(now))
+    guard seconds > 0 else { return "now" }
+    let days = seconds / 86_400, hours = seconds % 86_400 / 3600, minutes = seconds % 3600 / 60
+    let remaining = days > 0 ? "\(days)d \(hours)h" : hours > 0 ? "\(hours)h \(minutes)m" : "\(max(minutes, 1))m"
+    let formatter = DateFormatter()
+    formatter.setLocalizedDateFormatFromTemplate(Calendar.current.isDate(date, inSameDayAs: now) ? "jmm" : "EEEjmm")
+    return "\(remaining) · \(formatter.string(from: date))"
 }
 
 // Main entry point
@@ -1373,7 +1664,7 @@ class UpdateManager: ObservableObject {
     @Published var announcement: Announcement?
 
     // Fork-owned feed prevents upstream releases from replacing LimitFuel changes.
-    private let endpoint = URL(string: "https://raw.githubusercontent.com/innolope-dev/LimitFuel/main/website/fork-latest.json")!
+    private let endpoint = URL(string: "https://raw.githubusercontent.com/Innolope/LimitFuel/main/website/fork-latest.json")!
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -1718,7 +2009,8 @@ struct UsageView: View {
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
     @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
-    @AppStorage("usage_provider") private var usageProvider = "claude"
+    // Lets the offline preview renderer capture the Settings page.
+    var startsInSettings = false
     @State private var sessionCookieInput: String = ""
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
@@ -1733,24 +2025,16 @@ struct UsageView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("Usage provider", selection: $usageProvider) {
-                        Text("Claude").tag("claude")
-                        Text("Codex").tag("codex")
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: usageProvider) { _ in
-                        (NSApplication.shared.delegate as? AppDelegate)?.updateSelectedProviderIcon()
-                    }
-                    if usageProvider == "codex" {
-                        CodexUsageView(manager: codexManager, notificationsEnabled: Binding(
-                            get: { usageManager.usageNotificationsEnabled },
-                            set: { usageManager.usageNotificationsEnabled = $0; usageManager.saveSettings() }
-                        ))
+                    Color.clear.frame(height: 0).id("top")
+                    if showingSettings {
+                        settingsPage
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                     } else {
-                        content
+                        dashboard
+                            .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                 }
-                    .padding()
+                    .padding(14)
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
@@ -1758,727 +2042,657 @@ struct UsageView: View {
                     )
             }
             .frame(width: 360, height: min(max(measuredHeight, 100), maxPopupHeight))
-            // Dark: light scrim over the native material — between fully native
-            // (too transparent) and the v1.3.2 0.62 scrim (read as "too dark").
-            // Light: near-opaque backing, or a dark desktop bleeds through as
-            // murky blue-gray when forced.
-            .background(
-                colorScheme == .dark
-                    ? Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.3)
-                    : Color.white.opacity(0.85)
-            )
+            .background(popupBackground)
             .onPreferenceChange(ContentHeightKey.self) { value in
                 guard value > 0 else { return }
                 measuredHeight = value
             }
             .onAppear {
                 usageManager.updatePercentages()
+                if startsInSettings { showingSettings = true }
             }
-            .onChange(of: showingSettings) { isOpen in
-                if isOpen {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            proxy.scrollTo("settings-anchor", anchor: .bottom)
-                        }
-                    }
-                }
+            .onChange(of: showingSettings) { _ in
+                proxy.scrollTo("top", anchor: .top)
             }
         }
     }
 
-    var content: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Claude Usage")
-                .font(.headline)
-                .padding(.bottom, 4)
+    // On macOS 26 the popover itself is Liquid Glass, so only the provider glow
+    // is added. Earlier systems keep the tuned scrim over the native material:
+    // dark sits between fully native (too transparent) and the v1.3.2 0.62 scrim
+    // (read as "too dark"); light needs a near-opaque backing, or a dark desktop
+    // bleeds through as murky blue-gray when forced.
+    private var popupBackground: some View {
+        ZStack {
+            if !usesSystemGlass {
+                colorScheme == .dark
+                    ? Color(red: 0.07, green: 0.07, blue: 0.08).opacity(0.3)
+                    : Color.white.opacity(0.85)
+            }
+            AmbientBackground()
+        }
+    }
 
-            // Free-form message banner (author-controlled). Takes priority over
-            // the version-update banner when both are present.
-            if updateManager.visibleBanner == .message, let ann = updateManager.announcement {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        if let heading = ann.heading, !heading.isEmpty {
-                            Text(heading)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                        }
-                        Spacer()
-                        Button(action: { updateManager.dismissCurrent() }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(Color.secondaryText)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    if !ann.title.isEmpty {
-                        Text(ann.title)
-                            .font(.caption)
-                    }
-                    if !ann.body.isEmpty {
-                        Text(ann.body)
-                            .font(.caption2)
-                            .foregroundColor(Color.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !ann.buttons.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(ann.buttons.indices, id: \.self) { i in
-                                bannerButton(ann.buttons[i])
-                            }
-                        }
-                    }
+    // MARK: Dashboard
+
+    private var dashboard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                BrandGlyph()
+                Text("LimitFuel")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                Spacer()
+                if usageManager.isLoading || codexManager.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
                 }
-                .padding(8)
-                .background(Color.accentColor.opacity(0.12))
-                .cornerRadius(6)
+                GlassIconButton(symbol: "arrow.clockwise", help: "Refresh") { refresh() }
+                GlassIconButton(symbol: "gearshape", help: "Settings") {
+                    withAnimation(.easeInOut(duration: 0.25)) { showingSettings = true }
+                }
             }
 
-            // App update banner (version-based). Shares the slot with the message
-            // card; the more recently published of the two is shown.
-            if updateManager.visibleBanner == .update, let update = updateManager.available {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Text("⬆️")
-                        Text("Version \(update.version) available")
+            banners
+            claudeCard
+            CodexUsageView(manager: codexManager)
+
+            if statusManager.hasFetched {
+                serviceStatus
+            }
+
+            if let updated = lastUpdated {
+                Text("Updated \(formatTime(updated))")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+                    .padding(.horizontal, 4)
+            }
+        }
+    }
+
+    private var lastUpdated: Date? {
+        let claude = usageManager.hasFetchedData ? usageManager.lastUpdated : nil
+        let codex = codexManager.snapshot != nil ? codexManager.lastUpdated : nil
+        return [claude, codex].compactMap { $0 }.max()
+    }
+
+    private func refresh() {
+        usageManager.fetchUsage()
+        codexManager.fetchUsage()
+        statusManager.fetch()
+        updateManager.fetch()
+    }
+
+    @ViewBuilder
+    private var banners: some View {
+        // Free-form message banner (author-controlled). Takes priority over
+        // the version-update banner when both are present.
+        if updateManager.visibleBanner == .message, let ann = updateManager.announcement {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if let heading = ann.heading, !heading.isEmpty {
+                        Text(heading)
                             .font(.caption)
                             .fontWeight(.semibold)
-                        Spacer()
-                        Button(action: { updateManager.dismissCurrent() }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(Color.secondaryText)
-                        }
-                        .buttonStyle(.borderless)
                     }
-                    Text(update.title)
-                        .font(.caption)
-                    Text(update.body)
-                        .font(.caption2)
-                        .foregroundColor(Color.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !update.buttons.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(update.buttons.indices, id: \.self) { i in
-                                bannerButton(update.buttons[i])
-                            }
-                        }
-                    }
-                }
-                .padding(8)
-                .background(Color.accentColor.opacity(0.12))
-                .cornerRadius(6)
-            }
-
-            if let error = usageManager.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.orange)
-                    .padding(.bottom, 8)
-            }
-
-            // Only show usage if data has been fetched
-            if !usageManager.hasFetchedData {
-                Text("👋 Welcome! Connect your Claude session from Chrome below.")
-                    .font(.subheadline)
-                    .foregroundColor(Color.secondaryText)
-                    .padding(.vertical, 8)
-            }
-
-            // Session Usage
-            if usageManager.hasFetchedData {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Session (5 hour)")
-                        .font(.subheadline)
                     Spacer()
-                    if let resetTime = usageManager.sessionResetsAt {
-                        Text("Resets \(formatResetTime(resetTime))")
-                            .font(.caption)
-                            .foregroundColor(Color.secondaryText)
-                    }
+                    dismissBannerButton
                 }
-
-                UsageBar(value: usageManager.sessionPercentage,
-                         color: colorForPercentage(usageManager.sessionPercentage))
-
-                Text("\(Int(usageManager.sessionPercentage * 100))% used")
-                    .font(.caption)
-                    .foregroundColor(Color.secondaryText)
-            }
-
-            // Weekly Usage
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Weekly (7 day)")
-                        .font(.subheadline)
-                    Spacer()
-                    if let resetTime = usageManager.weeklyResetsAt {
-                        Text("Resets \(formatResetTime(resetTime, includeDate: true))")
-                            .font(.caption)
-                            .foregroundColor(Color.secondaryText)
-                    }
-                }
-
-                UsageBar(value: usageManager.weeklyPercentage,
-                         color: colorForPercentage(usageManager.weeklyPercentage))
-
-                Text("\(Int(usageManager.weeklyPercentage * 100))% used")
-                    .font(.caption)
-                    .foregroundColor(Color.secondaryText)
-            }
-
-            // Weekly Sonnet Usage (only show if available)
-            if usageManager.hasWeeklySonnet && usageManager.hasFetchedData {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Weekly Sonnet (7 day)")
-                            .font(.subheadline)
-                        Spacer()
-                        if let resetTime = usageManager.weeklySonnetResetsAt {
-                            Text("Resets \(formatResetTime(resetTime, includeDate: true))")
-                                .font(.caption)
-                                .foregroundColor(Color.secondaryText)
-                        }
-                    }
-
-                    UsageBar(value: usageManager.weeklySonnetPercentage,
-                             color: colorForPercentage(usageManager.weeklySonnetPercentage))
-
-                    Text("\(Int(usageManager.weeklySonnetPercentage * 100))% used")
+                if !ann.title.isEmpty {
+                    Text(ann.title)
                         .font(.caption)
-                        .foregroundColor(Color.secondaryText)
                 }
-            }
-
-            // Weekly Fable Usage — only surfaced once usage is above 1%
-            // (new model, counted separately; hidden while idle to avoid clutter).
-            if usageManager.hasWeeklyFable && usageManager.hasFetchedData && usageManager.weeklyFableUsage >= 1 {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Weekly Fable (7 day)")
-                            .font(.subheadline)
-                        Spacer()
-                        if let resetTime = usageManager.weeklyFableResetsAt {
-                            Text("Resets \(formatResetTime(resetTime, includeDate: true))")
-                                .font(.caption)
-                                .foregroundColor(Color.secondaryText)
-                        }
-                    }
-
-                    UsageBar(value: usageManager.weeklyFablePercentage,
-                             color: colorForPercentage(usageManager.weeklyFablePercentage))
-
-                    Text("\(Int(usageManager.weeklyFablePercentage * 100))% used")
-                        .font(.caption)
-                        .foregroundColor(Color.secondaryText)
-                }
-            }
-
-            // Usage credits (pay-as-you-go). Only shown once credits are actually
-            // used; links out to manage credits on claude.ai.
-            if usageManager.hasCreditUsage || usageManager.freeCreditsMinor > 0 {
-                let spentMinor = usageManager.extraSpentMinor
-                let limitMinor = usageManager.extraLimitMinor
-                let pct = limitMinor > 0 ? Double(spentMinor) / Double(limitMinor) : 0
-                let pctInt = Int((pct * 100).rounded())
-                // Show the exact % up to the limit; once over, just say "over limit".
-                let pctLabel = pctInt > 100 ? "over limit" : "\(pctInt)%"
-                let fmt: (Int) -> String = { minor in
-                    let v = Double(minor) / 100.0
-                    return usageManager.creditCurrency == "USD"
-                        ? String(format: "$%.2f", v)
-                        : String(format: "%@ %.2f", usageManager.creditCurrency, v)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Extra usage")
-                            .font(.subheadline)
-                        Spacer()
-                        Button(action: {
-                            if let url = URL(string: "https://claude.ai/new#settings/usage") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }) {
-                            Text("Manage →")
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(.accentColor)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-
-                    // Reset date, shortened (e.g. "Resets Aug 1") so it fits inline.
-                    let shortReset: String? = usageManager.extraResetsAt.map { d in
-                        let f = DateFormatter(); f.dateFormat = "MMM d"
-                        return "Resets \(f.string(from: d))"
-                    }
-
-                    // Spend vs monthly limit — only when there's actual spend.
-                    if usageManager.hasCreditUsage {
-                        if limitMinor > 0 {
-                            UsageBar(value: min(pct, 1.0),
-                                     color: colorForPercentage(pct))
-                        }
-                        HStack {
-                            Text(limitMinor > 0
-                                 ? "\(fmt(spentMinor)) of \(fmt(limitMinor)) · \(pctLabel)"
-                                 : "\(fmt(spentMinor)) spent")
-                                .font(.caption)
-                                .foregroundColor(Color.secondaryText)
-                            Spacer()
-                            if let r = shortReset {
-                                Text(r)
-                                    .font(.caption)
-                                    .foregroundColor(Color.secondaryText)
-                            }
-                        }
-                    }
-
-                    if usageManager.freeCreditsMinor > 0 {
-                        Text("\(fmt(usageManager.freeCreditsMinor)) free credits left")
-                            .font(.caption2)
-                            .foregroundColor(Color.secondaryText)
-                            .opacity(0.85)
-                    }
-                }
-            }
-
-            // Discreet info line: available limit resets when there are any (as in
-            // CodexUsageBar), else a reassurance naming whichever of Fable / extra
-            // usage is not being consumed (nothing shown when both are active).
-            if usageManager.hasFetchedData && usageManager.limitResetsLeft > 0 {
-                let n = usageManager.limitResetsLeft
-                let until: String = usageManager.limitResetsEndAt.map { d in
-                    // Last usable instant: an end at local midnight would read as the next day.
-                    let f = DateFormatter(); f.dateFormat = "MMM d"
-                    return " until \(f.string(from: d.addingTimeInterval(-1)))"
-                } ?? ""
-                Text("\(n) usage-limit reset\(n == 1 ? "" : "s") available\(until)")
-                    .font(.caption2)
-                    .foregroundColor(Color.secondaryText)
-                    .opacity(0.6)
-            } else if usageManager.hasFetchedData {
-                let fableActive = usageManager.hasWeeklyFable && usageManager.weeklyFableUsage >= 1
-                let extraActive = usageManager.hasCreditUsage || usageManager.freeCreditsMinor > 0
-                if !fableActive || !extraActive {
-                    Text(
-                        !fableActive && !extraActive ? "No Fable or extra usage"
-                        : !extraActive ? "No extra usage"
-                        : "No Fable usage"
-                    )
-                    .font(.caption2)
-                    .foregroundColor(Color.secondaryText)
-                    .opacity(0.6)
-                }
-            }
-            }
-
-            if statusManager.hasFetched {
-                Divider()
-            }
-
-            // Anthropic service status (compact; expandable on issue)
-            if statusManager.hasFetched {
-                let effective = statusManager.effectiveIndicator
-                let filteredIncidents = statusManager.filteredIncidents
-                let filteredAffected = statusManager.filteredAffectedComponents
-                let hasIssue = effective != "none"
-                    && (!filteredIncidents.isEmpty || !filteredAffected.isEmpty)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    // Compact header row
-                    HStack(alignment: .top, spacing: 6) {
-                        Circle()
-                            .fill(statusColor(for: effective))
-                            .frame(width: 8, height: 8)
-                            .padding(.top, 4)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(effective == "none"
-                                 ? "All Claude services operational"
-                                 : statusManager.statusDescription)
-                                .font(.caption)
-                                .foregroundColor(Color.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(statusContextLine(for: statusManager))
-                                .font(.system(size: 10))
-                                .foregroundColor(Color.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        if hasIssue {
-                            Button(action: { showingStatusDetails.toggle() }) {
-                                HStack(spacing: 2) {
-                                    Text(showingStatusDetails ? "Hide" : "Details")
-                                    Image(systemName: showingStatusDetails ? "chevron.up" : "chevron.down")
-                                        .font(.system(size: 8))
-                                }
-                                .font(.caption2)
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
-
-                    // Expanded panel
-                    if hasIssue && showingStatusDetails {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(filteredIncidents) { incident in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    // Title
-                                    Text(incident.name)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .fixedSize(horizontal: false, vertical: true)
-
-                                    // Status badge + updated time
-                                    HStack(spacing: 8) {
-                                        Text(incident.status.uppercased())
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(badgeColor(for: incident.status))
-                                            .cornerRadius(3)
-                                        if let updated = incident.updatedAt {
-                                            Text("Updated \(relativeTime(updated))")
-                                                .font(.caption2)
-                                                .foregroundColor(Color.secondaryText)
-                                        }
-                                    }
-
-                                    // Body
-                                    if !incident.latestUpdate.isEmpty {
-                                        Text(incident.latestUpdate)
-                                            .font(.caption)
-                                            .foregroundColor(.primary)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                            .padding(.top, 2)
-                                    }
-                                }
-                            }
-
-                            // Affected components (when no formal incident)
-                            if filteredIncidents.isEmpty && !filteredAffected.isEmpty {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Affected services")
-                                        .font(.caption2)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(Color.secondaryText)
-                                    ForEach(filteredAffected) { c in
-                                        HStack(spacing: 6) {
-                                            Circle()
-                                                .fill(Color.orange)
-                                                .frame(width: 5, height: 5)
-                                            Text(c.name).font(.caption2)
-                                            Spacer()
-                                            Text(componentLabel(c.status))
-                                                .font(.caption2)
-                                                .foregroundColor(Color.secondaryText)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Divider()
-
-                            HStack {
-                                if let lastCheck = statusManager.lastUpdated {
-                                    Text("Checked \(relativeTime(lastCheck))")
-                                        .font(.caption2)
-                                        .foregroundColor(Color.secondaryText)
-                                }
-                                Spacer()
-                                Button(action: {
-                                    NSWorkspace.shared.open(URL(string: "https://status.claude.com")!)
-                                }) {
-                                    Text("Open status page →")
-                                        .font(.caption2)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color.orange.opacity(0.10))
-                        .cornerRadius(6)
-                    }
-                }
-            }
-
-            if usageManager.hasFetchedData {
-            Divider()
-
-            HStack {
-                Text("Last updated: \(formatTime(usageManager.lastUpdated))")
-                    .font(.caption)
-                    .foregroundColor(Color.secondaryText)
-                Spacer()
-                Button("Refresh") {
-                    usageManager.fetchUsage()
-                    statusManager.fetch()
-                    updateManager.fetch()
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-            }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Button(usageManager.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
-                        usageManager.detectChromeSession(interactive: true, chooseProfile: true)
-                    }
-                    .disabled(usageManager.isDetectingChrome)
-                    .buttonStyle(.borderedProminent)
-                    Button("Open Claude in Chrome") { usageManager.openClaudeInChrome() }
-                        .buttonStyle(.bordered)
-                }
-                .controlSize(.small)
-                if let message = usageManager.chromeMessage {
-                    Text(message)
+                if !ann.body.isEmpty {
+                    Text(ann.body)
                         .font(.caption2)
                         .foregroundColor(Color.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(usageManager.chromeProfiles) { profile in
-                    Button("Use \(profile.name) (\(profile.id))") {
-                        usageManager.detectChromeSession(interactive: true, profileID: profile.id)
+                if !ann.buttons.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(ann.buttons.indices, id: \.self) { i in
+                            bannerButton(ann.buttons[i])
+                        }
                     }
-                    .disabled(usageManager.isDetectingChrome)
+                }
+            }
+            .glassCard(tint: .accentColor)
+        }
+
+        // App update banner (version-based). Shares the slot with the message
+        // card; the more recently published of the two is shown.
+        if updateManager.visibleBanner == .update, let update = updateManager.available {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .foregroundColor(.accentColor)
+                    Text("Version \(update.version) available")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    dismissBannerButton
+                }
+                Text(update.title)
                     .font(.caption)
-                }
-                if let checked = usageManager.lastChromeCheck {
-                    Text("Chrome checked: \(formatTime(checked))")
-                        .font(.caption2)
-                        .foregroundColor(Color.secondaryText)
-                }
-                Text("Usage refreshes every minute, or every 12 seconds above 90% five-hour usage until reset. Chrome cookies recheck hourly. macOS may ask for Chrome Safe Storage access when you click Detect.")
+                Text(update.body)
                     .font(.caption2)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Button(showingCookieInput ? "Hide Manual Cookie" : "Use a Manual Cookie") {
-                showingCookieInput.toggle()
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
-
-            if showingCookieInput {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("How to get your session cookie:")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Button(action: {
-                            NSWorkspace.shared.open(URL(string: "https://github.com/Artzainnn/ClaudeUsageBar/blob/main/setup-guide.png")!)
-                        }) {
-                            Text("View tutorial →")
-                                .font(.caption2)
-                                .foregroundColor(.blue)
+                if !update.buttons.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(update.buttons.indices, id: \.self) { i in
+                            bannerButton(update.buttons[i])
                         }
-                        .buttonStyle(.borderless)
                     }
+                }
+            }
+            .glassCard(tint: .accentColor)
+        }
+    }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("1. Go to Settings > Usage on claude.ai")
-                        Text("2. Press F12 (or Cmd+Option+I)")
-                        Text("3. Go to Network tab")
-                        Text("4. Refresh page, click 'usage' request")
-                        Text("5. Find 'Cookie' in Request Headers")
-                        Text("6. Copy full cookie value\n   (starts with anthropic-device-id=...)")
+    private var dismissBannerButton: some View {
+        Button(action: { updateManager.dismissCurrent() }) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(Color.secondaryText)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Dismiss")
+    }
+
+    private var claudeSource: String? {
+        guard usageManager.hasFetchedData else { return nil }
+        if !usageManager.chromeDetectionEnabled { return "Manual cookie" }
+        return usageManager.chromeProfileName.map { "Chrome · \($0)" } ?? "Chrome"
+    }
+
+    private var claudeCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ProviderHeader(name: "Claude", color: Brand.claude, detail: claudeSource)
+
+            if let error = usageManager.errorMessage {
+                WarningNote(text: error)
+            }
+
+            if usageManager.hasFetchedData {
+                MeterRow(title: "Session", subtitle: "5h",
+                         percent: Int(usageManager.sessionPercentage * 100),
+                         fraction: usageManager.sessionPercentage,
+                         color: meterColor(usageManager.sessionPercentage, base: Brand.claude),
+                         footnote: usageManager.sessionResetsAt.map { resetDescription($0) })
+                MeterRow(title: "Weekly", subtitle: "7d",
+                         percent: Int(usageManager.weeklyPercentage * 100),
+                         fraction: usageManager.weeklyPercentage,
+                         color: meterColor(usageManager.weeklyPercentage, base: Brand.claude),
+                         footnote: usageManager.weeklyResetsAt.map { resetDescription($0) })
+                claudeExtras
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(usageManager.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                        .font(.caption)
+                        .foregroundColor(Color.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    chromeButtons
+                }
+            }
+        }
+        .glassCard()
+    }
+
+    @ViewBuilder
+    private var claudeExtras: some View {
+        let fableActive = usageManager.hasWeeklyFable && usageManager.weeklyFableUsage >= 1
+        let extraActive = usageManager.hasCreditUsage || usageManager.freeCreditsMinor > 0
+
+        // Weekly Sonnet only when the plan reports it; Fable only once it is in
+        // use (new model, counted separately; hidden while idle to avoid clutter).
+        if usageManager.hasWeeklySonnet {
+            MeterRow(title: "Sonnet", subtitle: "7d",
+                     percent: Int(usageManager.weeklySonnetPercentage * 100),
+                     fraction: usageManager.weeklySonnetPercentage,
+                     color: meterColor(usageManager.weeklySonnetPercentage, base: Brand.claude),
+                     footnote: usageManager.weeklySonnetResetsAt.map { resetDescription($0) })
+        }
+        if fableActive {
+            MeterRow(title: "Fable", subtitle: "7d",
+                     percent: Int(usageManager.weeklyFablePercentage * 100),
+                     fraction: usageManager.weeklyFablePercentage,
+                     color: meterColor(usageManager.weeklyFablePercentage, base: Brand.claude),
+                     footnote: usageManager.weeklyFableResetsAt.map { resetDescription($0) })
+        }
+        if extraActive {
+            extraUsage
+        }
+
+        // Available limit resets, when the account has any.
+        if usageManager.limitResetsLeft > 0 {
+            let n = usageManager.limitResetsLeft
+            let until: String = usageManager.limitResetsEndAt.map { d in
+                // Last usable instant: an end at local midnight would read as the next day.
+                let f = DateFormatter(); f.dateFormat = "MMM d"
+                return " until \(f.string(from: d.addingTimeInterval(-1)))"
+            } ?? ""
+            infoLine("\(n) limit reset\(n == 1 ? "" : "s") available\(until)")
+        }
+    }
+
+    private func infoLine(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundColor(Color.secondaryText)
+            .opacity(0.8)
+            .frame(maxWidth: .infinity)
+    }
+
+    // Usage credits (pay-as-you-go). Only shown once credits are actually
+    // used; links out to manage credits on claude.ai.
+    private var extraUsage: some View {
+        let spentMinor = usageManager.extraSpentMinor
+        let limitMinor = usageManager.extraLimitMinor
+        let pct = limitMinor > 0 ? Double(spentMinor) / Double(limitMinor) : 0
+        let pctInt = Int((pct * 100).rounded())
+        // Show the exact % up to the limit; once over, just say "over limit".
+        let pctLabel = pctInt > 100 ? "over limit" : "\(pctInt)%"
+        let fmt: (Int) -> String = { minor in
+            let v = Double(minor) / 100.0
+            return usageManager.creditCurrency == "USD"
+                ? String(format: "$%.2f", v)
+                : String(format: "%@ %.2f", usageManager.creditCurrency, v)
+        }
+        // Reset date, shortened (e.g. "Resets Aug 1").
+        let shortReset: String? = usageManager.extraResetsAt.map { d in
+            let f = DateFormatter(); f.dateFormat = "MMM d"
+            return "Resets \(f.string(from: d))"
+        }
+
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Extra usage")
+                    .font(.system(size: 13, weight: .semibold))
+                if let r = shortReset {
+                    Text(r)
+                        .font(.system(size: 10))
+                        .foregroundColor(Color.secondaryText)
+                }
+                Spacer(minLength: 6)
+                Button(action: {
+                    if let url = URL(string: "https://claude.ai/new#settings/usage") {
+                        NSWorkspace.shared.open(url)
                     }
+                }) {
+                    Text("Manage →")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(Brand.claude)
+                }
+                .buttonStyle(.borderless)
+            }
+
+            // Spend vs monthly limit — only when there's actual spend.
+            if usageManager.hasCreditUsage {
+                if limitMinor > 0 {
+                    UsageBar(value: min(pct, 1.0), color: meterColor(pct, base: Brand.claude), height: 8, glow: true)
+                }
+                Text(limitMinor > 0
+                     ? "\(fmt(spentMinor)) of \(fmt(limitMinor)) · \(pctLabel)"
+                     : "\(fmt(spentMinor)) spent")
                     .font(.caption2)
                     .foregroundColor(Color.secondaryText)
+            }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Paste full cookie string:")
-                            .font(.caption2)
+            if usageManager.freeCreditsMinor > 0 {
+                Text("\(fmt(usageManager.freeCreditsMinor)) free credits left")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+            }
+        }
+    }
+
+    private var chromeButtons: some View {
+        HStack(spacing: 6) {
+            Button(usageManager.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
+                usageManager.detectChromeSession(interactive: true, chooseProfile: true)
+            }
+            .disabled(usageManager.isDetectingChrome)
+            .prominentButton(tint: Brand.claude)
+            Button("Open Claude in Chrome") { usageManager.openClaudeInChrome() }
+                .secondaryButton()
+        }
+        .controlSize(.small)
+    }
+
+    // Anthropic service status (compact; expandable on issue)
+    private var serviceStatus: some View {
+        let effective = statusManager.effectiveIndicator
+        let filteredIncidents = statusManager.filteredIncidents
+        let filteredAffected = statusManager.filteredAffectedComponents
+        let hasIssue = effective != "none"
+            && (!filteredIncidents.isEmpty || !filteredAffected.isEmpty)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Circle()
+                    .fill(statusColor(for: effective))
+                    .frame(width: 8, height: 8)
+                    .shadow(color: statusColor(for: effective).opacity(0.8), radius: 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(effective == "none"
+                         ? "Claude services operational"
+                         : statusManager.statusDescription)
+                        .font(.caption.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if hasIssue {
+                        Text(statusContextLine(for: statusManager))
+                            .font(.system(size: 10))
                             .foregroundColor(Color.secondaryText)
-                        VStack(spacing: 4) {
-                            PasteableTextField(text: $sessionCookieInput, placeholder: "Paste cookie here...")
-                                .frame(height: 60)
-                                .cornerRadius(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer()
+                if hasIssue {
+                    Button(action: { showingStatusDetails.toggle() }) {
+                        HStack(spacing: 2) {
+                            Text(showingStatusDetails ? "Hide" : "Details")
+                            Image(systemName: showingStatusDetails ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 8))
+                        }
+                        .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            if hasIssue && showingStatusDetails {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(filteredIncidents) { incident in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(incident.name)
+                                .font(.system(size: 12, weight: .semibold))
+                                .fixedSize(horizontal: false, vertical: true)
 
                             HStack(spacing: 8) {
-                                Button("Save Cookie & Fetch") {
-                                    if sessionCookieInput.isEmpty {
-                                        usageManager.errorMessage = "Cookie field is empty!"
-                                    } else {
-                                        usageManager.saveSessionCookie(sessionCookieInput)
-                                        sessionCookieInput = ""
-                                    }
+                                Text(incident.status.uppercased())
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(badgeColor(for: incident.status))
+                                    .cornerRadius(3)
+                                if let updated = incident.updatedAt {
+                                    Text("Updated \(relativeTime(updated))")
+                                        .font(.caption2)
+                                        .foregroundColor(Color.secondaryText)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
+                            }
 
-                                if UserDefaults.standard.string(forKey: "claude_session_cookie") != nil {
-                                    Button("Clear Cookie") {
-                                        sessionCookieInput = ""
-                                        usageManager.clearSessionCookie()
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                            if !incident.latestUpdate.isEmpty {
+                                Text(incident.latestUpdate)
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.top, 2)
+                            }
+                        }
+                    }
+
+                    // Affected components (when no formal incident)
+                    if filteredIncidents.isEmpty && !filteredAffected.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Affected services")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(Color.secondaryText)
+                            ForEach(filteredAffected) { c in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(Color.orange)
+                                        .frame(width: 5, height: 5)
+                                    Text(c.name).font(.caption2)
+                                    Spacer()
+                                    Text(componentLabel(c.status))
+                                        .font(.caption2)
+                                        .foregroundColor(Color.secondaryText)
                                 }
                             }
                         }
                     }
-                }
-                .padding(8)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(6)
-            }
 
-            // Settings Section
-            Button(showingSettings ? "Hide Settings" : "Settings") {
-                showingSettings.toggle()
-            }
-            .buttonStyle(.borderless)
-            .font(.caption)
+                    Divider()
 
-            if showingSettings {
-                VStack(alignment: .leading, spacing: 12) {
-                    Toggle(isOn: Binding(
-                        get: { usageManager.openAtLogin },
-                        set: { newValue in
-                            usageManager.openAtLogin = newValue
-                            usageManager.applyLoginItem(newValue)
-                            usageManager.saveSettings()
-                        }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Open at Login")
-                                .font(.caption)
-                            Text("Launch app automatically when you log in")
+                    HStack {
+                        if let lastCheck = statusManager.lastUpdated {
+                            Text("Checked \(relativeTime(lastCheck))")
                                 .font(.caption2)
                                 .foregroundColor(Color.secondaryText)
                         }
+                        Spacer()
+                        Button(action: {
+                            NSWorkspace.shared.open(URL(string: "https://status.claude.com")!)
+                        }) {
+                            Text("Open status page →")
+                                .font(.caption2)
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .toggleStyle(.checkbox)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(isOn: Binding(
-                            get: { usageManager.usageNotificationsEnabled },
-                            set: { newValue in
-                                usageManager.usageNotificationsEnabled = newValue
-                                usageManager.saveSettings()
-                            }
-                        )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Enable Usage Notifications")
-                                    .font(.caption)
-                                Text("Get alerts at 25%, 50%, 75%,\nand 90% session usage")
-                                    .font(.caption2)
-                                    .foregroundColor(Color.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-
-                        Toggle(isOn: Binding(
-                            get: { usageManager.statusNotificationsEnabled },
-                            set: { newValue in
-                                usageManager.statusNotificationsEnabled = newValue
-                                usageManager.saveSettings()
-                            }
-                        )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Enable Status Notifications")
-                                    .font(.caption)
-                                Text("Get alerts when tracked Claude services have an outage")
-                                    .font(.caption2)
-                                    .foregroundColor(Color.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .toggleStyle(.checkbox)
-
-                        Button("Test Notification") {
-                            usageManager.sendTestNotification()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(isOn: Binding(
-                            get: { usageManager.shortcutEnabled },
-                            set: { newValue in
-                                usageManager.shortcutEnabled = newValue
-                                usageManager.saveSettings()
-                                if let appDelegate = NSApplication.shared.delegate as? AppDelegate {
-                                    appDelegate.setShortcutEnabled(newValue)
-                                }
-                            }
-                        )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Keyboard Shortcut (⌘U)")
-                                    .font(.caption)
-                                Text("Toggle popup from anywhere.\nDisable if it conflicts with other apps.")
-                                    .font(.caption2)
-                                    .foregroundColor(Color.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .toggleStyle(.switch)
-
-
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Status alerts: services to track")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Text("Only tick the Claude services you use. Status issues with unticked services won't be shown or trigger alerts.")
-                            .font(.caption2)
-                            .foregroundColor(Color.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                        ForEach(statusManager.allComponents) { component in
-                            Toggle(isOn: Binding(
-                                get: { statusManager.isTracked(component.id) },
-                                set: { _ in statusManager.toggleComponent(component.id) }
-                            )) {
-                                Text(component.name)
-                                    .font(.caption2)
-                            }
-                            .toggleStyle(.checkbox)
-                        }
-                    }
-
-                    Divider()
-
-                    // Appearance sits last on purpose: opening Settings auto-scrolls
-                    // to the anchor below, so this lands in view.
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Appearance")
-                            .font(.caption)
-                        Picker("Appearance", selection: $appearanceMode) {
-                            Text("System").tag("system")
-                            Text("Dark").tag("dark")
-                            Text("Light").tag("light")
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .onChange(of: appearanceMode) { _ in
-                            (NSApplication.shared.delegate as? AppDelegate)?.applyAppearancePreference()
-                        }
-                        Text("Match macOS, or keep the classic dark look")
-                            .font(.caption2)
-                            .foregroundColor(Color.secondaryText)
-                    }
-
                 }
-                .padding(8)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(6)
-
-                // Anchor for scroll-to-bottom when Settings opens
-                Color.clear
-                    .frame(height: 1)
-                    .id("settings-anchor")
+                .padding(.top, 4)
             }
         }
+        .glassCard(tint: hasIssue ? .orange : nil, padding: 12)
+    }
+
+    // MARK: Settings
+
+    private var settingsPage: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                GlassIconButton(symbol: "chevron.left", help: "Back") {
+                    withAnimation(.easeInOut(duration: 0.25)) { showingSettings = false }
+                }
+                Text("Settings")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                Spacer()
+                Text("v\(updateManager.currentVersion)")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+            }
+
+            settingsCard("Claude account") {
+                chromeSession
+            }
+
+            if showingCookieInput {
+                manualCookie
+            }
+
+            settingsCard("Codex account") {
+                CodexAccountSettings(manager: codexManager)
+            }
+
+            settingsCard("General") {
+                settingToggle("Open at Login", detail: nil, isOn: Binding(
+                    get: { usageManager.openAtLogin },
+                    set: { newValue in
+                        usageManager.openAtLogin = newValue
+                        usageManager.applyLoginItem(newValue)
+                        usageManager.saveSettings()
+                    }
+                ))
+                settingToggle("Keyboard Shortcut (⌘U)",
+                              detail: "Toggles this popup from any app",
+                              isOn: Binding(
+                    get: { usageManager.shortcutEnabled },
+                    set: { newValue in
+                        usageManager.shortcutEnabled = newValue
+                        usageManager.saveSettings()
+                        if let appDelegate = NSApplication.shared.delegate as? AppDelegate {
+                            appDelegate.setShortcutEnabled(newValue)
+                        }
+                    }
+                ))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Appearance")
+                        .font(.caption)
+                    Picker("Appearance", selection: $appearanceMode) {
+                        Text("System").tag("system")
+                        Text("Dark").tag("dark")
+                        Text("Light").tag("light")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .onChange(of: appearanceMode) { _ in
+                        (NSApplication.shared.delegate as? AppDelegate)?.applyAppearancePreference()
+                    }
+                }
+            }
+
+            settingsCard("Notifications") {
+                settingToggle("Usage Alerts", detail: "At 25, 50, 75 and 90% of the session", isOn: Binding(
+                    get: { usageManager.usageNotificationsEnabled },
+                    set: { newValue in
+                        usageManager.usageNotificationsEnabled = newValue
+                        usageManager.saveSettings()
+                    }
+                ))
+                settingToggle("Status Alerts", detail: "Outages in tracked services", isOn: Binding(
+                    get: { usageManager.statusNotificationsEnabled },
+                    set: { newValue in
+                        usageManager.statusNotificationsEnabled = newValue
+                        usageManager.saveSettings()
+                    }
+                ))
+                Button("Send Test Notification") {
+                    usageManager.sendTestNotification()
+                }
+                .secondaryButton()
+                .controlSize(.small)
+            }
+
+            settingsCard("Tracked Claude services") {
+                ForEach(statusManager.allComponents) { component in
+                    Toggle(isOn: Binding(
+                        get: { statusManager.isTracked(component.id) },
+                        set: { _ in statusManager.toggleComponent(component.id) }
+                    )) {
+                        Text(component.name)
+                            .font(.caption2)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            }
+
+            Text("Refreshes every minute, every 12 s above 90%. Chrome rechecks hourly.")
+                .font(.caption2)
+                .foregroundColor(Color.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    private func settingsCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundColor(Color.secondaryText)
+            content()
+        }
+        .glassCard(padding: 12)
+    }
+
+    private func settingToggle(_ title: String, detail: String?, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption)
+                if let detail = detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundColor(Color.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(Brand.claude)
+        }
+    }
+
+    private var chromeSession: some View {
+        let connected = usageManager.hasFetchedData && usageManager.errorMessage == nil
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: connected ? "checkmark.circle.fill" : "link.circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(connected ? .green : Color.secondaryText)
+                Text(usageManager.chromeMessage ?? "Not connected yet")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            chromeButtons
+
+            ForEach(usageManager.chromeProfiles) { profile in
+                Button("Use \(profile.name) (\(profile.id))") {
+                    usageManager.detectChromeSession(interactive: true, profileID: profile.id)
+                }
+                .disabled(usageManager.isDetectingChrome)
+                .font(.caption)
+            }
+
+            HStack {
+                if let checked = usageManager.lastChromeCheck {
+                    Text("Checked \(formatTime(checked))")
+                        .font(.caption2)
+                        .foregroundColor(Color.secondaryText)
+                }
+                Spacer()
+                Button(showingCookieInput ? "Hide Manual Cookie" : "Use a Manual Cookie") {
+                    showingCookieInput.toggle()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption2)
+            }
+        }
+    }
+
+    private var manualCookie: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Manual cookie")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Paste a full claude.ai Cookie header.")
+                .font(.caption2)
+                .foregroundColor(Color.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            PasteableTextField(text: $sessionCookieInput, placeholder: "Paste cookie here...")
+                .frame(height: 60)
+                .cornerRadius(8)
+
+            HStack(spacing: 8) {
+                Button("Save Cookie & Fetch") {
+                    if sessionCookieInput.isEmpty {
+                        usageManager.errorMessage = "Cookie field is empty!"
+                    } else {
+                        usageManager.saveSessionCookie(sessionCookieInput)
+                        sessionCookieInput = ""
+                    }
+                }
+                .prominentButton(tint: Brand.claude)
+                .controlSize(.small)
+
+                if UserDefaults.standard.string(forKey: "claude_session_cookie") != nil {
+                    Button("Clear Cookie") {
+                        sessionCookieInput = ""
+                        usageManager.clearSessionCookie()
+                    }
+                    .secondaryButton()
+                    .controlSize(.small)
+                }
+            }
+        }
+        .glassCard(padding: 12)
     }
 
     func formatNumber(_ number: Int) -> String {
@@ -2491,20 +2705,6 @@ struct UsageView: View {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
-    }
-
-    func formatResetTime(_ date: Date, includeDate: Bool = false) -> String {
-        let formatter = DateFormatter()
-
-        if includeDate {
-            // Format: "on 31 Jan 2026 at 7:59 AM"
-            formatter.dateFormat = "d MMM yyyy 'at' h:mm a"
-            return "on \(formatter.string(from: date))"
-        } else {
-            formatter.timeStyle = .short
-            formatter.dateStyle = .none
-            return "at \(formatter.string(from: date))"
-        }
     }
 
     func colorForPercentage(_ percentage: Double) -> Color {

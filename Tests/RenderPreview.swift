@@ -32,13 +32,12 @@ import SwiftUI
                                       resetsAt: Date().addingTimeInterval(86400)))
         ])
         codex.lastUpdated = Date()
-        for provider in ["claude", "codex"] {
-            // This executable has its own defaults domain, separate from the app bundle.
-            UserDefaults.standard.set(provider, forKey: "usage_provider")
+        for (page, settings) in [("popup", false), ("settings", true)] {
             for dark in [false, true] {
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 let view = UsageView(usageManager: usage, statusManager: StatusManager(),
-                                     updateManager: UpdateManager(), codexManager: codex)
+                                     updateManager: UpdateManager(), codexManager: codex,
+                                     startsInSettings: settings)
                 let host = NSHostingView(rootView: view)
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 600),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
@@ -55,10 +54,9 @@ import SwiftUI
                 guard let png = bitmap.representation(using: .png, properties: [:]) else {
                     throw NSError(domain: "preview", code: 2)
                 }
-                try png.write(to: directory.appendingPathComponent("\(provider)-\(dark ? "dark" : "light").png"))
+                try png.write(to: directory.appendingPathComponent("\(page)-\(dark ? "dark" : "light").png"))
             }
         }
-        UserDefaults.standard.removeObject(forKey: "usage_provider")
-        print("Rendered offline Claude/Codex light/dark previews")
+        print("Rendered offline popup and settings light/dark previews")
     }
 }
