@@ -106,6 +106,7 @@ struct CodexClient {
         }
         var buffer = Data()
         var total = 0
+        var accountEstablished = false
         func receive(id: Int) throws -> [String: Any] {
             while DispatchTime.now().uptimeNanoseconds < deadline {
                 if let newline = buffer.firstIndex(of: 10) {
@@ -122,7 +123,9 @@ struct CodexClient {
                             try send(["id": requestID, "error": ["code": -32601, "message": "Read-only usage client"]])
                             throw CodexUsageError.signIn
                         }
-                        if message["method"] as? String == "account/updated" { throw CodexUsageError.signIn }
+                        if message["method"] as? String == "account/updated", accountEstablished {
+                            throw CodexUsageError.signIn
+                        }
                         continue
                     }
                     guard let responseID = message["id"] as? Int, responseID == id else { continue }
@@ -153,7 +156,7 @@ struct CodexClient {
             throw CodexUsageError.timeout
         }
         try send(["id": 1, "method": "initialize", "params": ["clientInfo": [
-            "name": "limitfuel", "title": "LimitFuel", "version": "1.3.4"
+            "name": "limitfuel", "title": "LimitFuel", "version": "1.3.5"
         ]]])
         _ = try receive(id: 1)
         try send(["method": "initialized", "params": [:]])
@@ -161,6 +164,9 @@ struct CodexClient {
         let accountResult = try receive(id: 2)
         guard let account = accountResult["account"] as? [String: Any],
               account["type"] as? String == "chatgpt" else { throw CodexUsageError.signIn }
+        // Startup auth announcements precede account/read on current Codex.
+        // Once the account is established, a change invalidates these limits.
+        accountEstablished = true
         let label = (account["email"] as? String).map { String($0.prefix(200)) }
         try send(["id": 3, "method": "account/rateLimits/read"])
         let result = try receive(id: 3)
@@ -253,7 +259,17 @@ final class CodexUsageManager: ObservableObject {
                 case .failure(let error):
                     self.snapshot = nil
                     self.errorMessage = (error as? CodexUsageError)?.localizedDescription ?? CodexUsageError.protocolFailure.localizedDescription
+                    let code: DiagnosticErrorCode
+                    switch error as? CodexUsageError {
+                    case .unavailable: code = .unavailable
+                    case .signIn: code = .signIn
+                    case .timeout: code = .timeout
+                    case .invalidData: code = .invalidData
+                    default: code = .protocolFailure
+                    }
+                    AppDiagnostics.shared.recordFailure(provider: .codex, code: code)
                 case .success(let value):
+                    AppDiagnostics.shared.recordRecovery(provider: .codex)
                     if self.lastAccount != value.accountLabel {
                         self.thresholds.removeAll()
                         self.thresholdOrder.removeAll()

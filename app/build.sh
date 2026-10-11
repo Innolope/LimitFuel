@@ -47,6 +47,11 @@ fi
 rm -rf build
 mkdir -p build
 
+# Official static SDK, verified against pinned release checksums. Keep downloads
+# outside build/ so local rebuilds can work from the verified cache.
+run_bounded 300 python3 scripts/fetch_sentry.py > build/sentry-framework-path
+SENTRY_FRAMEWORK_DIR=$(cat build/sentry-framework-path)
+
 # Create app bundle structure first
 APP_NAME="LimitFuel.app"
 APP_PATH="build/$APP_NAME"
@@ -56,6 +61,12 @@ mkdir -p "$APP_PATH/Contents/Resources"
 
 # Copy Info.plist
 cp Info.plist "$APP_PATH/Contents/"
+cp Diagnostics.plist "$APP_PATH/Contents/Resources/"
+cp .dependencies/Sentry-9.30.1-LICENSE.md "$APP_PATH/Contents/Resources/Sentry-LICENSE.md"
+mkdir -p "$APP_PATH/Contents/Resources/SentryPrivacy.bundle"
+cp SentryPrivacy-Info.plist "$APP_PATH/Contents/Resources/SentryPrivacy.bundle/Info.plist"
+cp "$SENTRY_FRAMEWORK_DIR/Sentry.framework/Resources/PrivacyInfo.xcprivacy" \
+    "$APP_PATH/Contents/Resources/SentryPrivacy.bundle/"
 cp Assets/*.pdf "$APP_PATH/Contents/Resources/"
 python3 scripts/build_info.py "$APP_PATH"
 
@@ -76,7 +87,8 @@ fi
 # Compile the Swift app for arm64
 run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_arm64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift AppDiagnostics.swift SentryDiagnostics.swift \
+    -F "$SENTRY_FRAMEWORK_DIR" -framework Sentry -Xlinker -ObjC \
     -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \
@@ -86,7 +98,8 @@ run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_
 # Compile for x86_64 (Intel)
 run_bounded 600 swiftc -parse-as-library -o "$APP_PATH/Contents/MacOS/LimitFuel_x86_64" \
     -module-cache-path build/ModuleCache \
-    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift \
+    LimitFuel.swift ChromeCookies.swift CodexUsage.swift CodexUsageView.swift MenuBarStatus.swift AppDiagnostics.swift SentryDiagnostics.swift \
+    -F "$SENTRY_FRAMEWORK_DIR" -framework Sentry -Xlinker -ObjC \
     -lsqlite3 -framework Security \
     -framework SwiftUI \
     -framework AppKit \

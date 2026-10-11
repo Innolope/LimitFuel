@@ -8,6 +8,8 @@ python3 -c 'import ast,pathlib; [ast.parse(p.read_text()) for p in pathlib.Path(
 sh -n Tests/run.sh
 sh -n Tests/lint.sh
 plutil -lint app/Info.plist
+plutil -lint app/Diagnostics.plist
+plutil -lint app/SentryPrivacy-Info.plist
 python3 -m json.tool .codex/quality-gates.json > /dev/null
 python3 -m json.tool website/fork-latest.json > /dev/null
 GIT_TOOL=/Library/Developer/CommandLineTools/usr/bin/git

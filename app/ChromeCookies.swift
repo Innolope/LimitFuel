@@ -124,7 +124,7 @@ struct ChromeCookieReader {
            let cache = profile["info_cache"] as? [String: [String: Any]] {
             for (id, info) in cache { names[id] = (info["name"] as? String).map { String($0.prefix(100)) } }
         }
-        var password: Data?
+        var password: Result<Data, Error>?
         var sessions: [ChromeSession] = []
         for directory in directories {
             guard directory.resolvingSymlinksInPath().deletingLastPathComponent().path
@@ -141,11 +141,14 @@ struct ChromeCookieReader {
             guard database.resolvingSymlinksInPath().path.hasPrefix(
                 directory.resolvingSymlinksInPath().path + "/") else { throw ChromeCookieError.profile }
             if let header = try read(database, now: now, password: {
-                if let existing = password { return existing }
-                let loaded = try passwordProvider(allowInteraction)
-                guard !loaded.isEmpty else { throw ChromeCookieError.keychain }
+                if let existing = password { return try existing.get() }
+                let loaded = Result {
+                    let value = try passwordProvider(allowInteraction)
+                    guard !value.isEmpty else { throw ChromeCookieError.keychain }
+                    return value
+                }
                 password = loaded
-                return loaded
+                return try loaded.get()
             }) {
                 let id = directory.lastPathComponent
                 sessions.append(ChromeSession(profile: ChromeProfile(id: id, name: names[id] ?? id),
@@ -194,11 +197,25 @@ struct ChromeCookieReader {
             WHERE host_key IN ('claude.ai','.claude.ai')
               AND path IN ('/','/api','/api/')
               AND (expires_utc=0 OR expires_utc>?) \(partitionFilter)
-            ORDER BY length(path) DESC,length(host_key) ASC,name ASC LIMIT 129
+            ORDER BY CASE WHEN name='sessionKey' THEN 0 ELSE 1 END,
+                     length(path) DESC,length(host_key) ASC,name ASC LIMIT 129
             """)
         defer { sqlite3_finalize(statement) }
         let chromeNow = (now.timeIntervalSince1970 + 11_644_473_600) * 1_000_000
         sqlite3_bind_double(statement, 1, chromeNow)
+        // Do not request Chrome's encryption key for a profile that has no
+        // eligible session. The probe shares this read transaction and filters.
+        let sessionProbe = try prepare("""
+            SELECT 1 FROM cookies WHERE name='sessionKey'
+              AND host_key IN ('claude.ai','.claude.ai')
+              AND path IN ('/','/api','/api/')
+              AND (expires_utc=0 OR expires_utc>?) \(partitionFilter) LIMIT 1
+            """)
+        defer { sqlite3_finalize(sessionProbe) }
+        sqlite3_bind_double(sessionProbe, 1, chromeNow)
+        let sessionStatus = sqlite3_step(sessionProbe)
+        if sessionStatus == SQLITE_DONE { return nil }
+        guard sessionStatus == SQLITE_ROW else { throw ChromeCookieError.database }
         var values: [String: String] = [:]
         var count = 0
         var status = sqlite3_step(statement)
@@ -209,27 +226,40 @@ struct ChromeCookieReader {
             let host = String(cString: hostBytes)
             let nameLength = Int(sqlite3_column_bytes(statement, 1))
             guard nameLength <= 1024,
-                  let name = String(data: Data(bytes: nameBytes, count: nameLength), encoding: .utf8) else {
+                  let name = String(data: Data(bytes: nameBytes, count: nameLength), encoding: .utf8),
+                  Self.validPair(name: name, value: "") else {
                 throw ChromeCookieError.invalidCookie
             }
-            let value: String
-            let byteCount = Int(sqlite3_column_bytes(statement, 3))
-            guard byteCount <= 32768 else { throw ChromeCookieError.invalidCookie }
-            if byteCount > 0, let bytes = sqlite3_column_blob(statement, 3) {
-                value = try Self.decrypt(Data(bytes: bytes, count: byteCount), host: host,
-                                         version: version, password: password())
-            } else if let bytes = sqlite3_column_text(statement, 2) {
-                guard sqlite3_column_bytes(statement, 2) <= 16384 else { throw ChromeCookieError.invalidCookie }
-                let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 2)))
-                guard let text = String(data: data, encoding: .utf8) else { throw ChromeCookieError.invalidCookie }
-                value = text
-            } else { throw ChromeCookieError.invalidCookie }
-            // Validate each SQLite component before joining; a semicolon must never
-            // become an extra header field after serialization.
-            guard Self.validPair(name: name, value: value) else { throw ChromeCookieError.invalidCookie }
-            if name == "sessionKey", let old = values[name], old != value { throw ChromeCookieError.invalidCookie }
-            if values[name] == nil { values[name] = value }
-            status = sqlite3_step(statement)
+            // Always advance, including when an unrelated cookie is skipped.
+            defer { status = sqlite3_step(statement) }
+            do {
+                let value: String
+                let byteCount = Int(sqlite3_column_bytes(statement, 3))
+                guard byteCount <= 32768 else { throw ChromeCookieError.invalidCookie }
+                if byteCount > 0, let bytes = sqlite3_column_blob(statement, 3) {
+                    let encrypted = Data(bytes: bytes, count: byteCount)
+                    guard encrypted.count > 3, encrypted.prefix(3) == Data("v10".utf8),
+                          (encrypted.count - 3) % kCCBlockSizeAES128 == 0 else { throw ChromeCookieError.encryption }
+                    value = try Self.decrypt(encrypted, host: host,
+                                             version: version, password: password())
+                } else if let bytes = sqlite3_column_text(statement, 2) {
+                    guard sqlite3_column_bytes(statement, 2) <= 16384 else { throw ChromeCookieError.invalidCookie }
+                    let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 2)))
+                    guard let text = String(data: data, encoding: .utf8) else { throw ChromeCookieError.invalidCookie }
+                    value = text
+                } else { throw ChromeCookieError.invalidCookie }
+                // Validate each SQLite component before joining; a semicolon must never
+                // become an extra header field after serialization.
+                guard Self.validPair(name: name, value: value) else { throw ChromeCookieError.invalidCookie }
+                guard name != "sessionKey" || !value.isEmpty else { throw ChromeCookieError.invalidCookie }
+                if name == "sessionKey", let old = values[name], old != value { throw ChromeCookieError.invalidCookie }
+                if values[name] == nil { values[name] = value }
+            } catch {
+                // JSON, quoted, Unicode and newer encrypted auxiliary cookies
+                // are common. Never serialize them into the header; authentication
+                // cookie failures (including denied Keychain access) still fail visibly.
+                if name == "sessionKey" { throw error }
+            }
         }
         guard status == SQLITE_DONE else { throw ChromeCookieError.database }
         guard values["sessionKey"] != nil else { return nil }

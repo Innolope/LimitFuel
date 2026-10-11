@@ -31,13 +31,14 @@ option remains for other browsers.
 ## ✨ Features
 
 - 🟢 **Real-time usage tracking** - Monitor session (5-hour) and weekly (7-day) limits
-- 🎨 **Compact menu bar display** - Monochrome Claude/OpenAI marks with independent percentages; unavailable providers stay hidden
+- 🎨 **Compact menu bar display** - Monochrome Segments app icon with Claude then Codex percentages; unavailable providers stay hidden
 - 🔔 **Smart notifications** - Alerts at 25%, 50%, 75%, 90% usage thresholds
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
 - 🔒 **Privacy-first** - All data stored locally on your Mac
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
+- 🩺 **Crash and error reporting** - Sentry reporting is on by default, with an off switch in Settings; see [diagnostics and privacy](docs/diagnostics.md)
 - 🎯 **Menu bar only** - No Dock icon, stays out of your way
 
 [See full feature list →](app/README.md)
@@ -90,7 +91,9 @@ and the separate Mac App Store requirements. No credentials belong in Git.
 
 For a local ad-hoc signed build without a distribution certificate, run
 `./build.sh --local`; this builds both architectures and does not launch the app.
-Run `./Tests/run.sh` from the repository root for offline acceptance tests.
+The build downloads a checksum-pinned official Sentry SDK and its MIT license.
+For offline acceptance tests, prepare it once with
+`python3 app/scripts/fetch_sentry.py`, then run `./Tests/run.sh` from the repository root.
 The test runner uses the toolchain and SDK in `/Applications/Xcode.app`.
 
 ## Codex setup

@@ -24,25 +24,31 @@ enum MenuBarStatus {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
         let strings = entries.map { NSAttributedString(string: "\($0.percent)%", attributes: attributes) }
-        let pairWidths = strings.map { ceil($0.size().width) + 20 }
-        let width = entries.isEmpty ? 18 : pairWidths.reduce(0, +) + CGFloat(max(0, entries.count - 1)) * 10
-        let image = NSImage(size: NSSize(width: width, height: 18))
-        image.lockFocus()
-        var x: CGFloat = 0
-        if entries.isEmpty {
-            NSImage(systemSymbolName: "gauge", accessibilityDescription: nil)?.draw(in: NSRect(x: 1, y: 1, width: 16, height: 16))
+        let textWidths = strings.map { ceil($0.size().width) }
+        let width = 18 + textWidths.reduce(0, +) + CGFloat(entries.count) * 8
+        // Draw at the destination's resolution. lockFocus caches the source at
+        // an implicit scale, causing width-dependent edge resampling at 1x/2x.
+        let image = NSImage(size: NSSize(width: width, height: 18), flipped: false) { _ in
+            NSColor.black.set()
+            // The app icon's two rows of five LEDs, drawn as a template for light
+            // and dark menu bars. Outlines preserve the unlit segments at this size.
+            for row in 0..<2 {
+                for column in 0..<5 {
+                    let rect = NSRect(x: 1 + CGFloat(column) * 3.25,
+                                      y: row == 0 ? 10 : 3, width: 2.5, height: 5)
+                    let segment = NSBezierPath(roundedRect: rect, xRadius: 0.8, yRadius: 0.8)
+                    if column < (row == 0 ? 4 : 2) { segment.fill() }
+                    else { segment.lineWidth = 0.65; segment.stroke() }
+                }
+            }
+            var x: CGFloat = 26
+            for index in entries.indices {
+                let text = strings[index]
+                text.draw(at: NSPoint(x: x, y: floor((18 - text.size().height) / 2)))
+                x += textWidths[index] + 8
+            }
+            return true
         }
-        for (index, entry) in entries.enumerated() {
-            let name = entry.provider == .claude ? "ClaudeMark" : "OpenAIMark"
-            // Bundled PDFs preserve vector geometry and need no network access.
-            let icon = Bundle.main.url(forResource: name, withExtension: "pdf").flatMap { NSImage(contentsOf: $0) }
-                ?? NSImage(contentsOfFile: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Assets/\(name).pdf").path)
-            icon?.draw(in: NSRect(x: x, y: 1, width: 16, height: 16))
-            let text = strings[index]
-            text.draw(at: NSPoint(x: x + 20, y: floor((18 - text.size().height) / 2)))
-            x += pairWidths[index] + 10
-        }
-        image.unlockFocus()
         image.isTemplate = true
         return image
     }
