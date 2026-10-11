@@ -31,12 +31,13 @@ option remains for other browsers.
 ## ✨ Features
 
 - 🟢 **Real-time usage tracking** - Monitor session (5-hour) and weekly (7-day) limits
-- 🎨 **Compact menu bar display** - Monochrome Segments app icon with Claude then Codex percentages; unavailable providers stay hidden
+- 🎨 **Compact menu bar display** - Claude and OpenAI marks with one percentage and reset countdown per connected provider; the app mark appears when neither is connected
+- 🔄 **Used or remaining** - Remaining is the menu bar default; switch to Used and choose each provider's limit independently in Settings
 - 🔔 **Smart notifications** - Alerts at 25%, 50%, 75%, 90% usage thresholds
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
-- 🔒 **Privacy-first** - All data stored locally on your Mac
+- 🔒 **Privacy-first** - Local credentials and read-only provider access, with a Settings opt-out for diagnostics
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
 - 🩺 **Crash and error reporting** - Sentry reporting is on by default, with an off switch in Settings; see [diagnostics and privacy](docs/diagnostics.md)
 - 🎯 **Menu bar only** - No Dock icon, stays out of your way
@@ -55,8 +56,18 @@ option remains for other browsers.
 
 **Menu Bar Display:**
 ```
-Claude mark 45%   OpenAI mark 82%  (only connected providers appear)
+Claude mark 82% · 4h   OpenAI mark 85% · 6d
 ```
+
+The percentages show remaining capacity by default. In Settings → Menu bar
+usage, turn off **Show remaining percentage** to show used capacity. Reset time
+follows a centered dot, for example `81% · 6d`, using days, hours, or minutes.
+Unknown reset times omit the countdown and separator. Tooltips identify the percentage meaning.
+
+Temporary refresh failures keep the last successful value visible. After ten
+minutes without a successful update, that provider's numbers gradually blur,
+reaching the maximum at thirty minutes. Tooltips retain exact values and update
+age; Increase Contrast or Reduce Transparency keeps the numbers sharp.
 
 **Popup Interface:**
 - Session (5-hour) usage with progress bar
@@ -106,8 +117,8 @@ and refresh. API-key-only accounts do not expose ChatGPT plan quotas.
 
 Claude and Codex refresh independently. Any five-hour window above 90% switches
 its provider to 12-second polling; known resets or usage at/below 90% restore
-one-minute polling. Chrome cookies still recheck hourly. Missing quotas display
-as unavailable; Codex supports multiple metered buckets and actual window lengths.
+one-minute polling. Chrome cookies still recheck hourly. Missing usage windows
+are hidden; Codex supports multiple metered buckets and actual window lengths.
 
 ## 🔧 Development
 

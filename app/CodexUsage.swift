@@ -3,6 +3,7 @@ import Combine
 import AppKit
 import Darwin
 import CoreFoundation
+import CryptoKit
 
 struct CodexWindow: Equatable {
     let usedPercent: Double
@@ -10,16 +11,54 @@ struct CodexWindow: Equatable {
     let resetsAt: Date?
 }
 
+struct CodexDisplayWindow: Identifiable {
+    let id: String
+    let window: CodexWindow
+}
+
 struct CodexBucket: Identifiable {
     let id: String
     let name: String
     let primary: CodexWindow?
     let secondary: CodexWindow?
+
+    var displayWindows: [CodexDisplayWindow] {
+        [primary.map { CodexDisplayWindow(id: "primary", window: $0) },
+         secondary.map { CodexDisplayWindow(id: "secondary", window: $0) }].compactMap { $0 }
+    }
 }
 
 struct CodexSnapshot {
     let accountLabel: String?
     let buckets: [CodexBucket]
+
+    var menuBarPercent: Double? {
+        MenuBarSelection.selectedOption(provider: .codex, options: menuBarOptions, selectionID: nil)?.percent
+    }
+
+    var menuBarOptions: [MenuBarWindowOption] {
+        let nameCounts = Dictionary(grouping: buckets, by: \.name).mapValues { $0.count }
+        return buckets.flatMap { bucket in
+            let name = (nameCounts[bucket.name] ?? 0) > 1 ? "\(bucket.name) (\(bucket.id))" : bucket.name
+            return bucket.displayWindows.map { entry in
+                let duration: String
+                if let minutes = entry.window.windowDurationMins {
+                    if minutes > 0 && minutes % 1440 == 0 { duration = "\(minutes / 1440)d" }
+                    else if minutes > 0 && minutes % 60 == 0 { duration = "\(minutes / 60)h" }
+                    else { duration = "\(minutes)m" }
+                } else { duration = "duration unavailable" }
+                let role = entry.id == "primary" ? "Primary" : "Secondary"
+                // Digest the exact UTF-8 bytes so delimiters and Unicode cannot
+                // alias roles, and unusually long graphemes cannot exceed the
+                // preference ID limit. Labels/order/account names are excluded.
+                let bucketID = SHA256.hash(data: Data(bucket.id.utf8)).map { String(format: "%02x", $0) }.joined()
+                return MenuBarWindowOption(id: "codex:\(bucketID):\(entry.id)", provider: .codex,
+                    label: "\(name) · \(role) · \(duration)", percent: entry.window.usedPercent,
+                    durationMinutes: entry.window.windowDurationMins, isPreferredBucket: bucket.id == "codex",
+                    resetsAt: entry.window.resetsAt)
+            }
+        }
+    }
 }
 
 enum CodexUsageError: LocalizedError {
@@ -214,6 +253,12 @@ struct CodexClient {
 
 final class CodexUsageManager: ObservableObject {
     @Published var snapshot: CodexSnapshot?
+    private var retainedMenuBarOptions: [MenuBarWindowOption] = []
+    @Published private(set) var menuBarIsStale = false
+    @Published private(set) var menuBarUpdatedAt: Date?
+    var menuBarDisplayOptions: [MenuBarWindowOption] {
+        snapshot?.menuBarOptions ?? retainedMenuBarOptions
+    }
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var lastUpdated: Date?
@@ -248,7 +293,9 @@ final class CodexUsageManager: ObservableObject {
         guard !isLoading else { return }
         lastFetchStartedAt = Date()
         isLoading = true
+        menuBarIsStale = !menuBarDisplayOptions.isEmpty
         errorMessage = nil
+        onChange?()
         let fetcher = self.fetcher
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let result = Result { try fetcher() }
@@ -258,6 +305,11 @@ final class CodexUsageManager: ObservableObject {
                 switch result {
                 case .failure(let error):
                     self.snapshot = nil
+                    if case .some(.signIn) = error as? CodexUsageError {
+                        self.retainedMenuBarOptions = []
+                        self.menuBarUpdatedAt = nil
+                    }
+                    self.menuBarIsStale = !self.retainedMenuBarOptions.isEmpty
                     self.errorMessage = (error as? CodexUsageError)?.localizedDescription ?? CodexUsageError.protocolFailure.localizedDescription
                     let code: DiagnosticErrorCode
                     switch error as? CodexUsageError {
@@ -276,7 +328,10 @@ final class CodexUsageManager: ObservableObject {
                     }
                     self.lastAccount = value.accountLabel
                     self.snapshot = value
+                    self.retainedMenuBarOptions = value.menuBarOptions
+                    self.menuBarIsStale = false
                     self.lastUpdated = Date()
+                    self.menuBarUpdatedAt = self.lastUpdated
                     self.checkNotifications(value)
                 }
                 self.onChange?()

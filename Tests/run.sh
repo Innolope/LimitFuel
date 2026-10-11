@@ -22,34 +22,86 @@ SWIFTC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctool
 SDK=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
 python3 "$REPO/Tests/ReleaseWorkflowTests.py" --app-dir "$REPO/app"
 python3 "$REPO/Tests/BoundedCommandTests.py"
-"$SWIFTC" -sdk "$SDK" -module-cache-path "$BUILD/module-cache" -lsqlite3 \
-  "$REPO/app/ChromeCookies.swift" "$REPO/Tests/ChromeCookieReaderTests.swift" -o "$BUILD/acceptance-tests"
+# Compile the shared app once. Every suite still runs as a separate executable,
+# with its original source copied byte-for-byte after one testable import.
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  -enable-testing -whole-module-optimization -Onone -parse-as-library \
+  -emit-library -emit-module -module-name LimitFuelAcceptance \
+  -emit-module-path "$BUILD/LimitFuelAcceptance.swiftmodule" -lsqlite3 \
+  -Xlinker -install_name -Xlinker @rpath/libLimitFuelAcceptance.dylib \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" \
+  "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" \
+  "$REPO/app/PopupLayout.swift" "$REPO/app/MenuBarPreferences.swift" \
+  -o "$BUILD/libLimitFuelAcceptance.dylib"
+
+compile_acceptance() {
+    TEST_SOURCE=$1
+    TEST_OUTPUT=$2
+    {
+        printf '%s\n' '@testable import LimitFuelAcceptance'
+        cat "$REPO/Tests/$TEST_SOURCE.swift"
+    } > "$BUILD/$TEST_SOURCE.swift"
+    "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+      -parse-as-library -Onone -I "$BUILD" -L "$BUILD" -lLimitFuelAcceptance -lsqlite3 \
+      -Xlinker -rpath -Xlinker "$BUILD" \
+      "$BUILD/$TEST_SOURCE.swift" -o "$BUILD/$TEST_OUTPUT"
+}
+
+compile_acceptance "ChromeCookieReaderTests" "acceptance-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/acceptance-tests"
 
-"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" -lsqlite3 \
-  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/UsageManagerTests.swift" -o "$BUILD/lifecycle-tests"
+compile_acceptance "UsageManagerTests" "lifecycle-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/lifecycle-tests"
-"$SWIFTC" -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/MenuBarStatusTests.swift" -o "$BUILD/menubar-tests"
+compile_acceptance "MenuBarStatusTests" "menubar-tests"
 "$BUILD/menubar-tests"
 
-"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" "$REPO/app/CodexUsage.swift" "$REPO/Tests/CodexUsageTests.swift" -o "$BUILD/codex-tests"
+compile_acceptance "CodexUsageTests" "codex-tests"
+compile_acceptance "CodexMenuSelectionTests" "codex-menu-selection-tests"
+"$BUILD/codex-menu-selection-tests"
 "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" -isysroot "$SDK" "$REPO/Tests/CodexDescendantFixture.c" -o "$BUILD/codex-descendant-fixture"
+python3 "$REPO/Tests/FixturePreparationTests.py" "$BUILD/codex-descendant-fixture"
+# Bound loader preparation separately; all timed cleanup assertions stay unchanged.
+python3 "$REPO/app/scripts/run_bounded.py" 30 "$BUILD/codex-descendant-fixture" --prepare
 CLAUDE_TEST_TMPDIR="$BUILD" CLAUDE_CODEX_DESCENDANT_FIXTURE="$BUILD/codex-descendant-fixture" "$BUILD/codex-tests"
 
 # Frozen spec-only desktop repair acceptance, using synthetic local fixtures.
 for CASE in Chrome Codex Menu; do
-    case "$CASE" in
-        Chrome) SOURCE=ChromeCookies; EXTRA=-lsqlite3 ;;
-        Codex) SOURCE=CodexUsage; EXTRA= ;;
-        Menu) SOURCE=MenuBarStatus; EXTRA= ;;
-    esac
-    "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" ${EXTRA} \
-      "$REPO/app/$SOURCE.swift" "$REPO/Tests/Desktop${CASE}Tests.swift" -o "$BUILD/desktop-$CASE"
-    CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/desktop-$CASE"
+    compile_acceptance "Desktop${CASE}Tests" "desktop-$CASE"
+    CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/desktop-$CASE"
 done
 
-"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
-  "$REPO/app/AppDiagnostics.swift" "$REPO/Tests/DiagnosticsTests.swift" -o "$BUILD/diagnostics-tests"
+# Frozen popup/provider display acceptance: deterministic geometry and PDF marks.
+compile_acceptance "PopupAcceptanceTests" "popup-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/popup-tests"
+
+compile_acceptance "MenuPreferencesAcceptance" "menu-preferences-tests"
+"$BUILD/menu-preferences-tests"
+
+compile_acceptance "MenuPreferencesIntegrationTests" "menu-preferences-integration-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/menu-preferences-integration-tests"
+
+compile_acceptance "MenuCountdownAcceptanceTests" "menu-countdown-tests"
+LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/menu-countdown-tests"
+
+compile_acceptance "StaleBlurAcceptanceTests" "stale-blur-tests"
+LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/stale-blur-tests"
+
+compile_acceptance "MenuRefreshStabilityTests" "menu-refresh-stability-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/menu-refresh-stability-tests"
+
+compile_acceptance "ProviderUpdateAgeTests" "provider-update-age-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/provider-update-age-tests"
+
+compile_acceptance "PercentageModeTests" "percentage-mode-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/percentage-mode-tests"
+
+compile_acceptance "ClaudePresentationAcceptanceTests" "claude-presentation-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-presentation-tests"
+
+compile_acceptance "ClaudeWeeklyRuleTests" "claude-weekly-rule-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-weekly-rule-tests"
+
+compile_acceptance "DiagnosticsTests" "diagnostics-tests"
 "$BUILD/diagnostics-tests"
 
 # Setup prepares the pinned SDK. Tests never download or send telemetry; missing

@@ -17,58 +17,87 @@ private func check(_ value: @autoclosure () -> Bool, _ message: String) { if !va
         check(label.localizedCaseInsensitiveContains("claude") && label.localizedCaseInsensitiveContains("codex"), "accessibility names providers")
         let image = MenuBarStatus.image(for: entries)
         check(image.isTemplate && image.size.height == 18, "filled image template height")
-        check(image.size.width > emptyImage.size.width, "percentages follow persistent mark")
+        check(image.size.width > emptyImage.size.width, "connected providers and percentages occupy visible width")
         let invalid = MenuBarStatus.entries(claude: .nan, codex: .infinity)
         check(invalid.isEmpty, "nonfinite usage excluded")
         check(MenuBarStatus.entries(claude: -1, codex: 101).isEmpty, "out of range excluded")
-        // Rasterize at one pixel per point. At x<18 the app mark must be identical
-        // regardless of provider availability. Separate provider logos violate this.
-        func raster(_ source: NSImage) -> NSBitmapImageRep {
-            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(source.size.width), pixelsHigh: 18, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-            source.draw(in: NSRect(origin: .zero, size: source.size))
-            NSGraphicsContext.restoreGraphicsState()
-            return rep
-        }
-        let mark = raster(emptyImage), filled = raster(image)
-        var ink = 0
-        for y in 0..<18 { for x in 0..<min(18,mark.pixelsWide) {
-            let a = mark.colorAt(x: x, y: y)!.alphaComponent
-            let b = filled.colorAt(x: x, y: y)!.alphaComponent
-            check(abs(a-b) < 0.03,
-                  "same single app mark with every provider state: x=\(x), y=\(y), emptyAlpha=\(a), filledAlpha=\(b), "
-                    + "emptyRepresentations=\(emptyImage.representations.map { "\(type(of: $0)) \($0.pixelsWide)x\($0.pixelsHigh) points=\($0.size)" }), "
-                    + "filledRepresentations=\(image.representations.map { "\(type(of: $0)) \($0.pixelsWide)x\($0.pixelsHigh) points=\($0.size)" })")
-            if a > 0.1 { ink += 1 }
-        } }
-        check(ink > 10, "visible app mark")
-        // Draw into explicit destination scales to keep the app mark stable on
-        // ordinary and Retina menu bars, regardless of the percentage text width.
+        // User-spec correction: the app mark is present only when disconnected.
+        // Connected states use their actual provider PDF marks, at both scales.
         func rasterAtScale(_ source: NSImage, scale: Int) -> NSBitmapImageRep {
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                       pixelsWide: Int(source.size.width) * scale,
-                                       pixelsHigh: 18 * scale, bitsPerSample: 8,
-                                       samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                       colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+                pixelsWide: Int(ceil(source.size.width)) * scale, pixelsHigh: 18 * scale,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
             rep.size = source.size
             NSGraphicsContext.saveGraphicsState()
             let context = NSGraphicsContext(bitmapImageRep: rep)!
             NSGraphicsContext.current = context
-            context.cgContext.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            // rep.size defines the point-to-pixel transform at both scales.
             source.draw(in: NSRect(origin: .zero, size: source.size))
             NSGraphicsContext.restoreGraphicsState()
             return rep
         }
-        for scale in [1, 2] {
-            let scaledMark = rasterAtScale(emptyImage, scale: scale)
-            let scaledFilled = rasterAtScale(image, scale: scale)
+        func alpha(_ rep: NSBitmapImageRep, _ x: Int, _ y: Int) -> CGFloat {
+            rep.colorAt(x: x, y: y)!.alphaComponent
+        }
+        func difference(_ a: NSBitmapImageRep, _ ax: Int,
+                        _ b: NSBitmapImageRep, _ bx: Int, _ scale: Int) -> CGFloat {
+            var error: CGFloat = 0
             for y in 0..<(18 * scale) { for x in 0..<(18 * scale) {
-                let a = scaledMark.colorAt(x: x, y: y)!.alphaComponent
-                let b = scaledFilled.colorAt(x: x, y: y)!.alphaComponent
-                check(abs(a-b) < 0.03,
-                      "same app mark at destination scale=\(scale): x=\(x), y=\(y), emptyAlpha=\(a), filledAlpha=\(b)")
+                error += abs(alpha(a,ax+x,y)-alpha(b,bx+x,y))
             } }
+            return error / CGFloat(18 * 18 * scale * scale)
+        }
+        let assetRoot = ProcessInfo.processInfo.environment["LIMITFUEL_ASSET_DIR"]
+            ?? "/Users/slava/Documents/GitHub/LimitFuel-desktop-fixes/app/Assets"
+        func providerPDF(_ filename: String) -> NSImage {
+            guard let pdf = NSImage(contentsOfFile: assetRoot + "/" + filename) else {
+                fatalError("Missing provider reference PDF: " + filename)
+            }
+            pdf.size = NSSize(width:18,height:18)
+            return pdf
+        }
+        let claudePDF = providerPDF("ClaudeMark.pdf")
+        let codexPDF = providerPDF("OpenAIMark.pdf")
+        for scale in [1,2] {
+            let emptyRaster = rasterAtScale(emptyImage,scale:scale)
+            var ink = 0
+            for y in 0..<(18*scale) { for x in 0..<min(18*scale,emptyRaster.pixelsWide) {
+                if alpha(emptyRaster,x,y) > 0.1 { ink += 1 }
+            } }
+            check(ink > 10*scale*scale,"visible app mark")
+            let claudeReference = rasterAtScale(claudePDF,scale:scale)
+            let codexReference = rasterAtScale(codexPDF,scale:scale)
+            check(difference(claudeReference,0,codexReference,0,scale) > 0.05,
+                  "provider references are visibly distinct")
+            for percent in [0.0,9,50,100] {
+                let claudeSingle = MenuBarStatus.image(for: MenuBarStatus.entries(claude:percent,codex:nil))
+                let codexSingle = MenuBarStatus.image(for: MenuBarStatus.entries(claude:nil,codex:percent))
+                let combined = MenuBarStatus.image(for: MenuBarStatus.entries(claude:percent,codex:percent))
+                for source in [claudeSingle,codexSingle,combined] {
+                    check(source.isTemplate && source.size.height == 18,"provider image template height")
+                    check(source.size.width > 18,"provider percentage has space after logo")
+                }
+                let c = rasterAtScale(claudeSingle,scale:scale)
+                let o = rasterAtScale(codexSingle,scale:scale)
+                let b = rasterAtScale(combined,scale:scale)
+                check(difference(c,0,claudeReference,0,scale) < 0.06,"Claude first mark matches PDF")
+                check(difference(o,0,codexReference,0,scale) < 0.06,"Codex first mark matches OpenAI PDF")
+                check(difference(b,0,c,0,scale) < 0.01,"Claude mark consistent across singleton/both widths")
+                check(difference(c,0,o,0,scale) > 0.05,"connected provider marks remain distinct")
+                // Spacing is unspecified. Search every legal 18pt slice after the
+                // first mark for the same OpenAI shape independently of layout code.
+                var best: CGFloat = 1
+                var bestConsistency: CGFloat = 1
+                if b.pixelsWide >= 36*scale {
+                    for x in (18*scale)...(b.pixelsWide-18*scale) {
+                        best = min(best,difference(b,x,codexReference,0,scale))
+                        bestConsistency = min(bestConsistency,difference(b,x,o,0,scale))
+                    }
+                }
+                check(best < 0.06,"second connected provider includes OpenAI PDF mark")
+                check(bestConsistency < 0.01,"OpenAI mark consistent across singleton/both widths")
+            }
         }
         print("Menu acceptance passed")
     }

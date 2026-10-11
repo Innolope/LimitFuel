@@ -7,20 +7,29 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 ## ✨ Features
 
 - 🟢 **Real-time Usage Tracking**: Monitor session (5-hour) and weekly (7-day) usage
-- 🎨 **Monochrome Provider Icons**: Claude and OpenAI marks with separate usage percentages; unavailable providers are hidden
+- 🎨 **Monochrome Provider Icons**: Claude and OpenAI marks with one percentage and reset countdown each; the app mark appears when neither is connected
+- 🔄 **Remaining or Used**: Remaining is the menu bar default, with a Settings toggle and an independent limit choice per provider
 - 🔔 **Smart Notifications**: Alerts at 25%, 50%, 75%, and 90% usage thresholds
 - ⚡ **Auto-Refresh**: Every minute, or every 12 seconds above 90% five-hour usage until reset
-- 🤖 **Codex**: Separate provider tab with metered buckets, window durations and reset times
+- 🤖 **Codex**: Metered buckets, available windows and reset times alongside Claude
 - ⌨️ **Keyboard Shortcut**: Toggle popup with Cmd+U from anywhere
-- 🔒 **Privacy First**: All data stored locally on your Mac
+- 🔒 **Privacy First**: Local credentials and read-only provider access, with a Settings opt-out for diagnostics
 - 📊 **Pro Plan Support**: Shows weekly Sonnet usage for Pro subscribers
 - 🎯 **Menu Bar Only**: No Dock icon, stays out of your way
 
 ## 🖼️ Screenshots
 
 **Menu Bar Display:**
-- Shows each connected provider's current usage percentage beside its monochrome mark
-- Example: `🟢 45%` (green < 70%, yellow 70-90%, red > 90%)
+- Shows each connected provider's remaining capacity beside its monochrome mark
+- Example: `Claude mark 82% · 4h   OpenAI mark 85% · 6d`
+- Settings → Menu bar usage → **Show remaining percentage** switches between
+  remaining (on, the default) and used (off). Each provider keeps its selected limit.
+- Plain reset text follows a centered dot, for example `81% · 6d`, using one unit:
+  days, hours, or minutes. Unknown reset times omit the countdown and separator
+  while preserving the percentage.
+- Temporary refresh failures retain last-known values. Text gradually blurs from
+  ten to thirty minutes without a successful provider update; exact values and
+  update age remain in tooltips. Increase Contrast or Reduce Transparency disables blur.
 
 **Popup Interface:**
 - Session (5-hour) usage with progress bar and reset time
@@ -96,9 +105,11 @@ Access settings by clicking the gear icon in the popup:
 
 ## 🔒 Privacy & Security
 
-- ✅ **All data stays on your Mac** - stored in UserDefaults only
-- ✅ **No analytics or tracking** - zero external services
 - ✅ **Session cookies stored locally** - never sent anywhere except claude.ai
+- ✅ **Read-only provider access** - Codex handles its own sign-in and usage requests
+- ✅ **Controllable diagnostics** - crash and error reports are on by default and
+  can be disabled immediately in Settings. Reports exclude credentials, account
+  details, application logs and request data; see [diagnostics and privacy](../docs/diagnostics.md)
 - ✅ **No hardcoded credentials** - org ID extracted dynamically from your cookie
 - ✅ **Open source** - review the code yourself
 

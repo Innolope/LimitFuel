@@ -325,7 +325,7 @@ func resetDescription(_ date: Date, now: Date = Date()) -> String {
 }
 
 // Main entry point
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
     var usageManager: UsageManager!
@@ -336,6 +336,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var codexPollTimer: Timer?
     var eventMonitor: Any?
     var hotKeyRef: EventHotKeyRef?
+    let popupPresentation = PopupPresentation()
+    var menuBarPreferences = MenuBarPreferences()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDiagnostics.shared.start()
@@ -365,18 +367,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateSelectedProviderIcon()
             self?.scheduleCodexPoll()
         }
+        menuBarPreferences.onChange = { [weak self] in self?.updateSelectedProviderIcon() }
 
         // Create popover
         popover = NSPopover()
-        // Initial guess; SwiftUI's intrinsic size (capped at 600) will drive the actual size.
-        popover.contentSize = NSSize(width: 360, height: 320)
+        popover.contentSize = NSSize(width: 360, height: popupPresentation.viewportHeight)
         popover.behavior = .transient
+        popover.delegate = self
+        popupPresentation.onResize = { [weak self] height in
+            guard let self = self else { return }
+            let size = NSSize(width: 360, height: height)
+            if self.popover.contentSize != size { self.popover.contentSize = size }
+        }
         popover.contentViewController = NSHostingController(rootView: UsageView(
             usageManager: usageManager,
             statusManager: statusManager,
             updateManager: updateManager,
-            codexManager: codexManager
+            codexManager: codexManager,
+            popupPresentation: popupPresentation,
+            menuBarPreferences: menuBarPreferences
         ))
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePopupScreenBounds),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updatePopupScreenBounds),
+            name: NSWindow.didChangeScreenNotification, object: statusItem.button?.window)
 
         // Appearance preference: "system" (default) tracks the macOS light/dark
         // setting; "dark"/"light" force one (dark was hard-forced in v1.3.2 and
@@ -408,6 +422,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Provider usage has independent adaptive timers. Status remains once a minute.
         Timer.scheduledTimer(withTimeInterval: RefreshSchedule.usageInterval, repeats: true) { _ in
             self.statusManager.fetch()
+            self.updateSelectedProviderIcon()
         }
 
         // App updates are infrequent (new release at most weekly) — poll every 3 hours.
@@ -421,9 +436,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            self?.updateSelectedProviderIcon()
             self?.usageManager.detectChromeSessionIfDue()
             self?.usageManager.fetchUsage()
             self?.codexManager.fetchUsage()
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.updateSelectedProviderIcon()
         }
 
         // Set up Cmd+U keyboard shortcut
@@ -432,8 +454,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func scheduleClaudePoll() {
         claudePollTimer?.invalidate()
-        let interval = RefreshSchedule.pollingInterval(usedPercent: usageManager.hasFetchedData ? usageManager.sessionUtilization : nil,
-            windowDurationMins: 300, resetsAt: usageManager.sessionResetsAt)
+        let interval = usageManager.menuBarDisplayOptions.map {
+            RefreshSchedule.pollingInterval(usedPercent: $0.percent, windowDurationMins: $0.durationMinutes, resetsAt: $0.resetsAt)
+        }.min() ?? RefreshSchedule.usageInterval
         let delay = RefreshSchedule.nextPollDelay(interval: interval, lastStartedAt: usageManager.lastFetchStartedAt)
         claudePollTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.usageManager.fetchUsage()
@@ -443,9 +466,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func scheduleCodexPoll() {
         codexPollTimer?.invalidate()
-        let windows = codexManager.snapshot?.buckets.flatMap { [$0.primary, $0.secondary].compactMap { $0 } } ?? []
+        let windows = codexManager.menuBarDisplayOptions
         let interval = windows.map {
-            RefreshSchedule.pollingInterval(usedPercent: $0.usedPercent, windowDurationMins: $0.windowDurationMins, resetsAt: $0.resetsAt)
+            RefreshSchedule.pollingInterval(usedPercent: $0.percent, windowDurationMins: $0.durationMinutes, resetsAt: $0.resetsAt)
         }.min() ?? RefreshSchedule.usageInterval
         let delay = RefreshSchedule.nextPollDelay(interval: interval, lastStartedAt: codexManager.lastFetchStartedAt)
         codexPollTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -456,10 +479,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateSelectedProviderIcon() {
         guard let button = statusItem?.button else { return }
-        let bucket = codexManager?.snapshot?.buckets.first(where: { $0.id == "codex" }) ?? codexManager?.snapshot?.buckets.first
-        let codex = (bucket?.primary ?? bucket?.secondary)?.usedPercent
-        let claude = usageManager?.hasFetchedData == true ? usageManager?.sessionUtilization : nil
-        let entries = MenuBarStatus.entries(claude: claude, codex: codex)
+        let codex = MenuBarSelection.selectedOption(provider: .codex,
+            options: codexManager?.menuBarDisplayOptions ?? [],
+            selectionID: menuBarPreferences.selectionID(for: .codex))
+        let claude = MenuBarSelection.selectedOption(provider: .claude,
+            options: usageManager?.menuBarDisplayOptions ?? [],
+            selectionID: menuBarPreferences.selectionID(for: .claude))
+        let entries = MenuBarStatus.selectedEntries(claude: claude, codex: codex,
+            claudeIsStale: usageManager?.menuBarIsStale ?? false,
+            codexIsStale: codexManager?.menuBarIsStale ?? false,
+            claudeUpdatedAt: usageManager?.menuBarUpdatedAt,
+            codexUpdatedAt: codexManager?.menuBarUpdatedAt,
+            percentageMode: menuBarPreferences.percentageMode)
         button.title = ""
         button.image = MenuBarStatus.image(for: entries)
         button.toolTip = MenuBarStatus.accessibilityLabel(for: entries)
@@ -594,15 +625,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openPopover() {
+        guard !popover.isShown else { return }
         if let button = statusItem.button {
             // Force UI refresh by updating percentages
             DispatchQueue.main.async {
                 self.usageManager.updatePercentages()
             }
 
+            updatePopupScreenBounds()
+            popupPresentation.beginPresentation()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
 
             // Add event monitor to detect clicks outside the popover
+            removePopoverEventMonitor()
             eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 if self?.popover.isShown == true {
                     self?.closePopover()
@@ -613,7 +648,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func closePopover() {
         popover.performClose(nil)
+        removePopoverEventMonitor()
+    }
 
+    func popoverDidShow(_ notification: Notification) {
+        updatePopupScreenBounds()
+        // A retained hosting controller does not necessarily receive onAppear
+        // again. Signal each actual presentation after its window is attached.
+        popupPresentation.beginPresentation()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        removePopoverEventMonitor()
+    }
+
+    @objc func updatePopupScreenBounds() {
+        guard let button = statusItem.button, let anchorWindow = button.window,
+              let screen = anchorWindow.screen else { return }
+        let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let visible = screen.visibleFrame
+        // Reserve native arrow/border space before first presentation, then use
+        // the actual decoration height when a popover window is available.
+        var chrome: CGFloat = 32
+        if popover.isShown, let view = popover.contentViewController?.view, let window = view.window {
+            chrome = max(chrome, window.frame.height - view.bounds.height)
+        }
+        let heightBelowAnchor = min(visible.maxY, anchor.minY) - visible.minY
+        popupPresentation.constrain(availableHeight: max(1, heightBelowAnchor - chrome))
+    }
+
+    private func removePopoverEventMonitor() {
         // Remove event monitor
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
@@ -651,6 +715,11 @@ struct Main {
 #endif
 
 class UsageManager: ObservableObject {
+    @Published private(set) var menuBarOptions: [MenuBarWindowOption] = []
+    @Published private(set) var menuBarDisplayOptions: [MenuBarWindowOption] = []
+    @Published private(set) var menuBarIsStale = false
+    @Published private(set) var menuBarUpdatedAt: Date?
+    private var resolvedOrganizationID: String?
     @Published var sessionUsage: Int = 0
     @Published var sessionUtilization: Double = 0
     @Published var sessionLimit: Int = 100
@@ -681,6 +750,8 @@ class UsageManager: ObservableObject {
     @Published var usageNotificationsEnabled: Bool = true
     @Published var statusNotificationsEnabled: Bool = true
     @Published var openAtLogin: Bool = false
+    @Published var hasWeeklyUsage: Bool = false
+    @Published private(set) var showsClaudeWeeklyUsage: Bool = false
     @Published var hasWeeklySonnet: Bool = false
     @Published var hasWeeklyFable: Bool = false
     @Published var hasFetchedData: Bool = false
@@ -693,6 +764,9 @@ class UsageManager: ObservableObject {
     @Published var lastChromeCheck: Date?
     @Published var chromeDetectionEnabled = true
     private(set) var lastFetchStartedAt: Date?
+
+    // Chrome sync health is independent of credentials accepted by the usage API.
+    var showsClaudeConnectionControls: Bool { !hasFetchedData }
 
     private var statusItem: NSStatusItem?
     private var sessionCookie: String = ""
@@ -912,11 +986,12 @@ class UsageManager: ObservableObject {
     private func replaceSessionCookie(_ cookie: String) {
         invalidateConnection()
         let sameSession = sessionIdentity(sessionCookie) == sessionIdentity(cookie) && !sessionCookie.isEmpty
-        let priorThreshold = lastNotifiedThreshold
-        resetUsageData()
         if sameSession {
-            lastNotifiedThreshold = priorThreshold
-            defaults.set(priorThreshold, forKey: "last_notified_threshold")
+            // Auxiliary cookies rotate without establishing a new identity.
+            // Preserve validated usage and threshold history until the new response.
+            menuBarIsStale = !menuBarDisplayOptions.isEmpty
+        } else {
+            resetUsageData()
         }
         sessionCookie = cookie
         defaults.set(cookie, forKey: "claude_session_cookie")
@@ -944,16 +1019,17 @@ class UsageManager: ObservableObject {
     }
 
     private func resetUsageData() {
+        menuBarOptions = []
+        menuBarDisplayOptions = []
+        menuBarIsStale = false
+        menuBarUpdatedAt = nil
+        resolvedOrganizationID = nil
         // Reset all data when credentials change so accounts never share usage state.
         sessionUsage = 0
         sessionUtilization = 0
-        weeklyUsage = 0
-        weeklySonnetUsage = 0
-        weeklyFableUsage = 0
         sessionResetsAt = nil
-        weeklyResetsAt = nil
-        weeklySonnetResetsAt = nil
-        weeklyFableResetsAt = nil
+        resetOptionalUsage()
+        sessionPercentage = 0
         extraSpentMinor = 0
         extraLimitMinor = 0
         extraResetsAt = nil
@@ -962,15 +1038,32 @@ class UsageManager: ObservableObject {
         limitResetsEndAt = nil
         hasCreditUsage = false
         hasFetchedData = false
-        hasWeeklySonnet = false
-        hasWeeklyFable = false
         errorMessage = nil
         lastNotifiedThreshold = 0
         defaults.set(0, forKey: "last_notified_threshold")
 
-        // Update status bar to show 0%
+        // Redraw without values belonging to the previous credentials.
         delegate?.updateSelectedProviderIcon()
 
+    }
+
+    private func resetOptionalUsage() {
+        hasWeeklyUsage = false
+        showsClaudeWeeklyUsage = false
+        hasWeeklySonnet = false
+        hasWeeklyFable = false
+        weeklyUsage = 0
+        weeklySonnetUsage = 0
+        weeklyFableUsage = 0
+        weeklyLimit = 100
+        weeklySonnetLimit = 100
+        weeklyFableLimit = 100
+        weeklyResetsAt = nil
+        weeklySonnetResetsAt = nil
+        weeklyFableResetsAt = nil
+        weeklyPercentage = 0
+        weeklySonnetPercentage = 0
+        weeklyFablePercentage = 0
     }
 
     func fetchOrganizationId(completion: @escaping (String?) -> Void) {
@@ -999,8 +1092,15 @@ class UsageManager: ObservableObject {
 
         NSLog("📡 Fetching bootstrap to get org ID...")
 
-        performRequest(request) { data, response, error in
-            guard let data = data,
+        performRequest(request) { [weak self] data, response, error in
+            if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403].contains(status) {
+                self?.resetUsageData()
+                self?.errorMessage = "HTTP \(status)"
+                AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
+                completion(nil)
+                return
+            }
+            guard error == nil, let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let account = json["account"] as? [String: Any],
                   let lastActiveOrgId = account["lastActiveOrgId"] as? String,
@@ -1027,19 +1127,30 @@ class UsageManager: ObservableObject {
         }
 
         isLoading = true
+        menuBarIsStale = !menuBarDisplayOptions.isEmpty
         errorMessage = nil
+        delegate?.updateSelectedProviderIcon()
 
         // Extract org ID from cookie
         fetchOrganizationId { [weak self] orgId in
             guard let self = self, let orgId = orgId else {
 
-                    self?.errorMessage = "Could not get org ID from cookie"
+                    if self?.errorMessage == nil {
+                        self?.errorMessage = "Could not get org ID from cookie"
+                        AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
+                    }
+                    self?.menuBarOptions = []
+                    self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     self?.isLoading = false
-                    AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
+                    self?.updateStatusBar()
 
                 return
             }
 
+            if let previous = self.resolvedOrganizationID, previous != orgId {
+                self.resetUsageData()
+            }
+            self.resolvedOrganizationID = orgId
             self.fetchUsageWithOrgId(orgId)
             self.fetchExtraUsage(orgId)
             self.fetchFreeCredits(orgId)
@@ -1205,6 +1316,8 @@ class UsageManager: ObservableObject {
 
                 if let error = error {
                     self?.errorMessage = "Network error"
+                    self?.menuBarOptions = []
+                    self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     let code: DiagnosticErrorCode = (error as NSError).code == NSURLErrorTimedOut ? .timeout : .protocolFailure
                     AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                     self?.updateStatusBar()
@@ -1213,6 +1326,8 @@ class UsageManager: ObservableObject {
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     self?.errorMessage = "Invalid response"
+                    self?.menuBarOptions = []
+                    self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
                     self?.updateStatusBar()
                     return
@@ -1224,6 +1339,12 @@ class UsageManager: ObservableObject {
                 if httpResponse.statusCode == 200, let data = data {
                     self?.parseUsageData(data)
                 } else {
+                    self?.menuBarOptions = []
+                    if [401, 403].contains(httpResponse.statusCode) {
+                        self?.resetUsageData()
+                    } else {
+                        self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
+                    }
                     self?.errorMessage = "HTTP \(httpResponse.statusCode)"
                     AppDiagnostics.shared.recordFailure(provider: .claude,
                         code: [401, 403].contains(httpResponse.statusCode) ? .signIn : .protocolFailure)
@@ -1235,7 +1356,12 @@ class UsageManager: ObservableObject {
     }
 
     func parseUsageData(_ data: Data) {
-        // Every response must establish fresh adaptive state, including invalid JSON.
+        menuBarOptions = []
+        menuBarIsStale = !menuBarDisplayOptions.isEmpty
+        defer { delegate?.updateSelectedProviderIcon() }
+        // Every response establishes availability anew, including invalid JSON.
+        resetOptionalUsage()
+        sessionPercentage = 0
         sessionUtilization = 0
         sessionUsage = 0
         sessionResetsAt = nil
@@ -1278,70 +1404,48 @@ class UsageManager: ObservableObject {
             sessionUsage = Int(sessionUtil)
             sessionLimit = 100
             sessionResetsAt = resetDate(fiveHour["resets_at"])
+            var availableWindows = [MenuBarWindowOption(id: "claude:five_hour", provider: .claude,
+                label: "Session · 5h", percent: sessionUtil, durationMinutes: 300, isPreferredBucket: true,
+                resetsAt: sessionResetsAt)]
 
-            if let sevenDay = json["seven_day"] as? [String: Any] {
-                if let weeklyUtil = percentage(sevenDay["utilization"]) {
-                    weeklyUsage = Int(weeklyUtil)
-                    weeklyLimit = 100
-                }
-                if let resetsAtString = sevenDay["resets_at"] as? String {
-                    NSLog("🕐 Weekly resets_at string: \(resetsAtString)")
-                    if let resetsAt = resetDate(resetsAtString) {
-                        weeklyResetsAt = resetsAt
-                        NSLog("✅ Parsed weekly reset time: \(resetsAt)")
-                    } else {
-                        NSLog("❌ Failed to parse weekly reset time")
-                    }
-                }
+            if let sevenDay = json["seven_day"] as? [String: Any],
+               let weeklyUtil = percentage(sevenDay["utilization"]) {
+                hasWeeklyUsage = true
+                showsClaudeWeeklyUsage = weeklyUtil > 0 || sessionUtil == 0
+                availableWindows.append(MenuBarWindowOption(id: "claude:seven_day", provider: .claude,
+                    label: "Weekly · 7d", percent: weeklyUtil, durationMinutes: 10080, isPreferredBucket: true,
+                    resetsAt: resetDate(sevenDay["resets_at"])))
+                weeklyUsage = Int(weeklyUtil)
+                weeklyResetsAt = resetDate(sevenDay["resets_at"])
             }
 
-            // Check for seven_day_sonnet (Pro plan feature)
-            if let sevenDaySonnet = json["seven_day_sonnet"] as? [String: Any] {
+            if let sevenDaySonnet = json["seven_day_sonnet"] as? [String: Any],
+               let sonnetUtil = percentage(sevenDaySonnet["utilization"]) {
                 hasWeeklySonnet = true
-                if let sonnetUtil = percentage(sevenDaySonnet["utilization"]) {
-                    weeklySonnetUsage = Int(sonnetUtil)
-                    weeklySonnetLimit = 100
-                }
-                if let resetsAtString = sevenDaySonnet["resets_at"] as? String {
-                    NSLog("🕐 Weekly Sonnet resets_at string: \(resetsAtString)")
-                    if let resetsAt = resetDate(resetsAtString) {
-                        weeklySonnetResetsAt = resetsAt
-                        NSLog("✅ Parsed weekly Sonnet reset time: \(resetsAt)")
-                    } else {
-                        NSLog("❌ Failed to parse weekly Sonnet reset time")
-                    }
-                }
-            } else {
-                hasWeeklySonnet = false
+                availableWindows.append(MenuBarWindowOption(id: "claude:seven_day_sonnet", provider: .claude,
+                    label: "Sonnet · 7d", percent: sonnetUtil, durationMinutes: 10080, isPreferredBucket: false,
+                    resetsAt: resetDate(sevenDaySonnet["resets_at"])))
+                weeklySonnetUsage = Int(sonnetUtil)
+                weeklySonnetResetsAt = resetDate(sevenDaySonnet["resets_at"])
             }
 
             // Fable is a new, separately-counted model. It isn't a top-level
             // key like seven_day_sonnet — it lives in the `limits` array as a
             // model-scoped weekly limit (scope.model.display_name == "Fable").
-            // The bar is only surfaced in the UI when usage is above 1%.
-            hasWeeklyFable = false
+            // The bar is only surfaced in the UI when usage is at least 1%.
             if let limits = json["limits"] as? [[String: Any]] {
                 let fableLimit = limits.first { entry in
                     let scope = entry["scope"] as? [String: Any]
                     let model = scope?["model"] as? [String: Any]
                     return (model?["display_name"] as? String) == "Fable"
                 }
-                if let fable = fableLimit {
+                if let fable = fableLimit, let percent = percentage(fable["percent"]) {
                     hasWeeklyFable = true
-                    // `percent` may decode as Int or Double depending on payload.
-                    if let p = percentage(fable["percent"]) {
-                        weeklyFableUsage = Int(p)
-                    }
-                    weeklyFableLimit = 100
-                    if let resetsAtString = fable["resets_at"] as? String {
-                        NSLog("🕐 Weekly Fable resets_at string: \(resetsAtString)")
-                        if let resetsAt = resetDate(resetsAtString) {
-                            weeklyFableResetsAt = resetsAt
-                            NSLog("✅ Parsed weekly Fable reset time: \(resetsAt)")
-                        } else {
-                            NSLog("❌ Failed to parse weekly Fable reset time")
-                        }
-                    }
+                    availableWindows.append(MenuBarWindowOption(id: "claude:seven_day_fable", provider: .claude,
+                        label: "Fable · 7d", percent: percent, durationMinutes: 10080, isPreferredBucket: false,
+                        resetsAt: resetDate(fable["resets_at"])))
+                    weeklyFableUsage = Int(percent)
+                    weeklyFableResetsAt = resetDate(fable["resets_at"])
                 }
             }
 
@@ -1351,8 +1455,12 @@ class UsageManager: ObservableObject {
             NSLog("✅ Parsed: Session \(sessionUsage)%, Weekly \(weeklyUsage)%\(hasWeeklySonnet ? ", Weekly Sonnet \(weeklySonnetUsage)%" : "")\(hasWeeklyFable ? ", Weekly Fable \(weeklyFableUsage)%" : "")")
 
             lastUpdated = Date()
+            menuBarUpdatedAt = lastUpdated
             errorMessage = nil
             hasFetchedData = true
+            menuBarOptions = availableWindows
+            menuBarDisplayOptions = availableWindows
+            menuBarIsStale = false
             AppDiagnostics.shared.recordRecovery(provider: .claude)
 
             // Update percentage values for progress bars
@@ -1372,7 +1480,9 @@ class UsageManager: ObservableObject {
         delegate?.scheduleClaudePoll()
 
         // Check for notification thresholds
-        if hasFetchedData { checkNotificationThresholds(percentage: sessionPercent) }
+        if hasFetchedData && !menuBarIsStale && errorMessage == nil {
+            checkNotificationThresholds(percentage: sessionPercent)
+        }
     }
 
     func checkNotificationThresholds(percentage: Int) {
@@ -2033,24 +2143,22 @@ struct UsageView: View {
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
     @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
+    @ObservedObject var popupPresentation: PopupPresentation = PopupPresentation()
+    @ObservedObject var menuBarPreferences: MenuBarPreferences = MenuBarPreferences()
     // Lets the offline preview renderer capture the Settings page.
     var startsInSettings = false
     @State private var sessionCookieInput: String = ""
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingStatusDetails: Bool = false
-    @State private var measuredHeight: CGFloat = 250
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance_mode") private var appearanceMode: String = "system"
     @State private var diagnosticsEnabled = AppDiagnostics.shared.enabled
-
-    private let maxPopupHeight: CGFloat = 600
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Color.clear.frame(height: 0).id("top")
                     if showingSettings {
                         settingsPage
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -2060,25 +2168,38 @@ struct UsageView: View {
                     }
                 }
                     .padding(14)
+                    .id("top")
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
                         }
                     )
             }
-            .frame(width: 360, height: min(max(measuredHeight, 100), maxPopupHeight))
+            .frame(width: 360, height: popupPresentation.viewportHeight)
             .background(popupBackground)
             .onPreferenceChange(ContentHeightKey.self) { value in
-                guard value > 0 else { return }
-                measuredHeight = value
+                popupPresentation.measure(contentHeight: value)
             }
             .onAppear {
                 usageManager.updatePercentages()
                 if startsInSettings { showingSettings = true }
             }
             .onChange(of: showingSettings) { _ in
-                proxy.scrollTo("top", anchor: .top)
+                resetScroll(proxy)
             }
+            .onChange(of: popupPresentation.opening) { _ in
+                resetScroll(proxy)
+            }
+        }
+    }
+
+    private func resetScroll(_ proxy: ScrollViewProxy) {
+        // Wait for the new page/document bounds before resolving its top anchor.
+        // Keep all account, settings and text-entry state in the retained view.
+        DispatchQueue.main.async {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { proxy.scrollTo("top", anchor: .top) }
         }
     }
 
@@ -2245,18 +2366,16 @@ struct UsageView: View {
                          fraction: usageManager.sessionPercentage,
                          color: meterColor(usageManager.sessionPercentage, base: Brand.claude),
                          footnote: usageManager.sessionResetsAt.map { resetDescription($0) })
-                MeterRow(title: "Weekly", subtitle: "7d",
-                         percent: Int(usageManager.weeklyPercentage * 100),
-                         fraction: usageManager.weeklyPercentage,
-                         color: meterColor(usageManager.weeklyPercentage, base: Brand.claude),
-                         footnote: usageManager.weeklyResetsAt.map { resetDescription($0) })
-                claudeExtras
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    chromeConnectionControls
+                if usageManager.showsClaudeWeeklyUsage {
+                    MeterRow(title: "Weekly", subtitle: "7d",
+                             percent: Int(usageManager.weeklyPercentage * 100),
+                             fraction: usageManager.weeklyPercentage,
+                             color: meterColor(usageManager.weeklyPercentage, base: Brand.claude),
+                             footnote: usageManager.weeklyResetsAt.map { resetDescription($0) })
                 }
+                claudeExtras
             }
-            if usageManager.hasFetchedData && (usageManager.isDetectingChrome || usageManager.chromeNeedsAttention) {
+            if usageManager.showsClaudeConnectionControls {
                 chromeConnectionControls
             }
         }
@@ -2560,6 +2679,15 @@ struct UsageView: View {
                 CodexAccountSettings(manager: codexManager)
             }
 
+            settingsCard("Menu bar usage") {
+                settingToggle("Show remaining percentage", detail: "Turn off to show used percentage.", isOn: Binding(
+                    get: { menuBarPreferences.percentageMode == .remaining },
+                    set: { menuBarPreferences.setPercentageMode($0 ? .remaining : .used) }
+                ))
+                menuBarSelector(provider: .claude, options: usageManager.menuBarOptions)
+                menuBarSelector(provider: .codex, options: codexManager.snapshot?.menuBarOptions ?? [])
+            }
+
             settingsCard("General") {
                 settingToggle("Send crash and error reports", detail: "Helps improve LimitFuel using Sentry. Excludes credentials, account details and application logs.", isOn: Binding(
                     get: { diagnosticsEnabled },
@@ -2648,6 +2776,34 @@ struct UsageView: View {
                 .foregroundColor(Color.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 4)
+        }
+    }
+
+    private func menuBarSelector(provider: MenuBarProvider, options: [MenuBarWindowOption]) -> some View {
+        let valid = options.filter { $0.percent.isFinite && (0...100).contains($0.percent) }
+        let selectedID = menuBarPreferences.selectionID(for: provider)
+        let unavailable = selectedID != MenuBarSelection.automaticID && !valid.contains { $0.id == selectedID }
+        return VStack(alignment: .leading, spacing: 4) {
+            Picker(provider == .claude ? "Claude" : "Codex", selection: Binding(
+                get: { menuBarPreferences.selectionID(for: provider) },
+                set: { menuBarPreferences.select($0, for: provider) }
+            )) {
+                Text("Automatic (session preferred)").tag(MenuBarSelection.automaticID)
+                ForEach(valid) { option in
+                    Text(option.label).tag(option.id)
+                }
+                if unavailable {
+                    Text("Saved window unavailable").tag(selectedID)
+                }
+            }
+            .pickerStyle(.menu)
+            .font(.caption)
+            if unavailable {
+                Text("Using Automatic until your saved window returns.")
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

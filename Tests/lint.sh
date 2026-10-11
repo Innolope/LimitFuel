@@ -7,6 +7,7 @@ bash -n app/create_dmg.sh
 python3 -c 'import ast,pathlib; [ast.parse(p.read_text()) for p in pathlib.Path("app/scripts").glob("*.py")]'
 sh -n Tests/run.sh
 sh -n Tests/lint.sh
+sh -n Tests/run-popup-native.sh
 plutil -lint app/Info.plist
 plutil -lint app/Diagnostics.plist
 plutil -lint app/SentryPrivacy-Info.plist
