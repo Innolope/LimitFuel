@@ -331,10 +331,22 @@ struct StaleBlurAcceptanceTests {
                 }
                 let dividerEnd = (dividerStart..<resetPixels.width).first(where: { columnInk(resetPixels, x: $0) == 0 }) ?? resetPixels.width
                 let dividerWidth = dividerEnd - dividerStart
-                check(dividerStart - percentEnd > scale && dividerWidth > 0 && dividerWidth <= 2 * scale,
-                      "plain divider is narrow with clear leading spacing: \(provider), \(scale)x")
-                check(((dividerStart..<dividerEnd).map { columnInk(resetPixels, x: $0) }.max() ?? 0) >= 8 * scale,
-                      "plain divider is a tall vertical stroke")
+                check(dividerStart - percentEnd > scale && dividerWidth > 0 && dividerWidth <= 3 * scale,
+                      "plain dot is small with clear leading spacing: \(provider), \(scale)x")
+                let dotRows = (0..<resetPixels.height).filter { y in
+                    (dividerStart..<dividerEnd).contains { x in resetPixels.bytes[(y * resetPixels.width + x) * 4 + 3] > 8 }
+                }
+                let dotReferenceRows = (0..<barePixels.height).filter { y in
+                    (18 * scale..<barePixels.width).contains { x in barePixels.bytes[(y * barePixels.width + x) * 4 + 3] > 8 }
+                }
+                if let top = dotRows.first, let bottom = dotRows.last,
+                   let textTop = dotReferenceRows.first, let textBottom = dotReferenceRows.last {
+                    let dotHeight = bottom - top + 1
+                    check(dotHeight <= 3 * scale && abs(dotHeight - dividerWidth) <= scale,
+                          "plain separator is a small roughly round dot: \(provider), \(scale)x")
+                    check(abs((top + bottom) - (textTop + textBottom)) <= 3 * scale,
+                          "plain dot is centered beside percentage text: \(provider), \(scale)x")
+                } else { check(false, "plain dot and percentage both have visible ink") }
                 let countdownStart = (dividerEnd..<resetPixels.width).first(where: { columnInk(resetPixels, x: $0) > 0 })
                 check(countdownStart.map { $0 - dividerEnd >= scale } ?? false,
                       "plain divider has clear spacing before countdown")

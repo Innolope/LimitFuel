@@ -102,12 +102,12 @@ enum MenuBarStatus {
         let countdowns = entries.map { entry in
             resetLabel(resetsAt: entry.resetsAt, now: now).map { NSAttributedString(string: $0, attributes: countdownAttributes) }
         }
-        // Five points on each side keep the sharp divider outside the text
-        // blur padding, including at the maximum stale radius.
-        let dividerGap: CGFloat = 5
-        let dividerWidth: CGFloat = 1
+        // Tight spacing with one extra point after the centered dot.
+        let gapBeforeDot: CGFloat = 2
+        let gapAfterDot: CGFloat = 3
+        let dotDiameter: CGFloat = 2
         let resetExtents = countdowns.map { countdown in
-            countdown.map { ceil($0.size().width) + 2 * dividerGap + dividerWidth } ?? 0
+            countdown.map { ceil($0.size().width) + gapBeforeDot + dotDiameter + gapAfterDot } ?? 0
         }
         let width: CGFloat = entries.isEmpty ? 18 :
             textWidths.reduce(0, +) + resetExtents.reduce(0, +) + CGFloat(entries.count) * 22 + CGFloat(entries.count - 1) * 10
@@ -144,10 +144,11 @@ enum MenuBarStatus {
                 let radius = blurEnabled ? blurRadius(lastUpdated: entries[index].updatedAt, now: now) : 0
                 drawText(text, at: NSPoint(x: x + 22, y: floor((18 - text.size().height) / 2)), radius: radius)
                 if let countdown = countdowns[index] {
-                    let dividerX = x + 22 + textWidths[index] + dividerGap
+                    let dotX = x + 22 + textWidths[index] + gapBeforeDot
                     NSColor.black.setFill()
-                    NSRect(x: dividerX, y: 4, width: dividerWidth, height: 10).fill()
-                    drawText(countdown, at: NSPoint(x: dividerX + dividerWidth + dividerGap,
+                    NSBezierPath(ovalIn: NSRect(x: dotX, y: (18 - dotDiameter) / 2,
+                        width: dotDiameter, height: dotDiameter)).fill()
+                    drawText(countdown, at: NSPoint(x: dotX + dotDiameter + gapAfterDot,
                         y: floor((18 - countdown.size().height) / 2)), radius: radius)
                 }
                 x += 22 + textWidths[index] + resetExtents[index] + 10

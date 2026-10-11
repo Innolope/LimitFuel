@@ -21,10 +21,10 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 
 **Menu Bar Display:**
 - Shows each connected provider's remaining capacity beside its monochrome mark
-- Example: `Claude mark 82% | 4h   OpenAI mark 85% | 6d`
+- Example: `Claude mark 82% · 4h   OpenAI mark 85% · 6d`
 - Settings → Menu bar usage → **Show remaining percentage** switches between
   remaining (on, the default) and used (off). Each provider keeps its selected limit.
-- Plain reset text follows a separator, for example `81% | 6d`, using one unit:
+- Plain reset text follows a centered dot, for example `81% · 6d`, using one unit:
   days, hours, or minutes. Unknown reset times omit the countdown and separator
   while preserving the percentage.
 - Temporary refresh failures retain last-known values. Text gradually blurs from

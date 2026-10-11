@@ -315,3 +315,38 @@ the parent changed README/plan documentation and staged the index during checks.
 This is an invalidated validation snapshot, not a passing gate or failing product
 test. Final inputs are now frozen; ordinary guarded commit must revalidate them
 without concurrent file/index changes. No gate or invariant is bypassed.
+
+## User revision: centered dot
+
+After the pipe revision was committed as cda1e65, the user explicitly replaced
+the vertical separator with a centered dot: `81% · 6d`. This supersedes only
+separator geometry. Preserve 13pt percentage, 10pt medium countdown, spacing,
+sharp marks/separator, no background, missing-reset omission and every accepted
+data/blur/preference invariant. The same failure list applies; no new external
+boundary, state or preference migration is introduced. Independent shape-test
+correction precedes the separate rendering edit; other assertions are unchanged.
+
+The superseded local universal build was stopped through its TERM cleanup, and
+hosted run 38181618902 was cancelled to avoid finishing obsolete artifacts. The
+installed verified 21ece3f app is retained until the dot revision is verified.
+Finish all docs/staging before ordinary guarded commit, so its validation
+snapshot stays immutable. Then push once, verify exact-head CI, build and install
+only the requested dot revision with the prior app preserved for rollback.
+
+Native previews showed current (5pt each side), compact (3pt) and tight (2pt)
+spacing. The user selected tight with a slightly increased gap after the dot.
+Use 2pt before and 3pt after the centered 2pt dot, preserving typography and
+all prior invariants. Independent corrected dot acceptance is frozen at SHA256
+e2539b42967b293baafd7b9bae038e1eee20d7d1e923faf3657ea95168816fb9;
+only shape assertions changed, replacing the former tall stroke with a small
+round centered component. Keep every blur/policy/logo/spacing assertion.
+
+The selected 2pt/3pt spacing passed all 4,577 frozen assertions at 1x/2x,
+including maximum-blur dot sharpness and every accessibility preference
+combination. The previously verified explicit-policy API is unchanged. Final
+rendering source SHA256 is
+498bfc8e723c5cbd9cef12616138c6fbfa363e2bc8e645c52bbd9f2813bf702b.
+Final light/dark previews use native AppKit rendering and bundled PDF marks,
+with synthetic percentages. Complete guarded-commit checks, exact-head hosted
+CI, clean-source universal build and installed-bundle verification follow this
+frozen checkpoint. No file/index edits will occur during commit validation.
