@@ -27,11 +27,36 @@ python3 "$REPO/Tests/BoundedCommandTests.py"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/acceptance-tests"
 
 "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" -lsqlite3 \
-  "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/UsageManagerTests.swift" -o "$BUILD/lifecycle-tests"
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/UsageManagerTests.swift" -o "$BUILD/lifecycle-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/lifecycle-tests"
 "$SWIFTC" -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/MenuBarStatus.swift" "$REPO/Tests/MenuBarStatusTests.swift" -o "$BUILD/menubar-tests"
 "$BUILD/menubar-tests"
 
-"$SWIFTC" -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/CodexUsage.swift" "$REPO/Tests/CodexUsageTests.swift" -o "$BUILD/codex-tests"
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" "$REPO/app/CodexUsage.swift" "$REPO/Tests/CodexUsageTests.swift" -o "$BUILD/codex-tests"
 "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang" -isysroot "$SDK" "$REPO/Tests/CodexDescendantFixture.c" -o "$BUILD/codex-descendant-fixture"
 CLAUDE_TEST_TMPDIR="$BUILD" CLAUDE_CODEX_DESCENDANT_FIXTURE="$BUILD/codex-descendant-fixture" "$BUILD/codex-tests"
+
+# Frozen spec-only desktop repair acceptance, using synthetic local fixtures.
+for CASE in Chrome Codex Menu; do
+    case "$CASE" in
+        Chrome) SOURCE=ChromeCookies; EXTRA=-lsqlite3 ;;
+        Codex) SOURCE=CodexUsage; EXTRA= ;;
+        Menu) SOURCE=MenuBarStatus; EXTRA= ;;
+    esac
+    "$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" "$REPO/app/AppDiagnostics.swift" ${EXTRA} \
+      "$REPO/app/$SOURCE.swift" "$REPO/Tests/Desktop${CASE}Tests.swift" -o "$BUILD/desktop-$CASE"
+    CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/desktop-$CASE"
+done
+
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/Tests/DiagnosticsTests.swift" -o "$BUILD/diagnostics-tests"
+"$BUILD/diagnostics-tests"
+
+# Setup prepares the pinned SDK. Tests never download or send telemetry; missing
+# dependencies fail instead of silently skipping the privacy checks.
+SENTRY_DIR=$(python3 "$REPO/app/scripts/fetch_sentry.py" --offline)
+"$SWIFTC" -D ACCEPTANCE_TESTS -sdk "$SDK" -module-cache-path "$BUILD/module-cache" \
+  -F "$SENTRY_DIR" -framework Sentry -Xlinker -ObjC \
+  "$REPO/app/AppDiagnostics.swift" "$REPO/app/SentryDiagnostics.swift" \
+  "$REPO/Tests/SentryPrivacyTests.swift" -o "$BUILD/sentry-privacy-tests"
+"$BUILD/sentry-privacy-tests"

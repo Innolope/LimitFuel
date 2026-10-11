@@ -338,6 +338,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotKeyRef: EventHotKeyRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDiagnostics.shared.start()
         // NSUserNotification (deprecated but works without permissions for unsigned apps)
         NSLog("✅ App launched, notifications ready")
 
@@ -686,6 +687,7 @@ class UsageManager: ObservableObject {
     @Published var shortcutEnabled: Bool = true
     @Published var isDetectingChrome = false
     @Published var chromeMessage: String?
+    @Published var chromeNeedsAttention = false
     @Published var chromeProfiles: [ChromeProfile] = []
     @Published var chromeProfileName: String?
     @Published var lastChromeCheck: Date?
@@ -735,6 +737,8 @@ class UsageManager: ObservableObject {
         guard !isDetectingChrome, interactive || chromeDetectionEnabled else { return }
         isDetectingChrome = true
         chromeMessage = nil
+        chromeNeedsAttention = false
+        chromeProfiles = []
         let revision = connectionRevision
         let pinned = chooseProfile ? nil : (profileID ?? defaults.string(forKey: "chrome_profile_id"))
         chromeQueue.async { [weak self] in
@@ -746,10 +750,21 @@ class UsageManager: ObservableObject {
                 guard self.connectionRevision == revision else { return }
                 self.lastChromeCheck = Date()
                 switch result {
-                case .failure(let error): self.chromeMessage = error.localizedDescription
+                case .failure(let error):
+                    self.chromeNeedsAttention = true
+                    self.chromeMessage = error.localizedDescription
+                    let code: DiagnosticErrorCode
+                    switch error as? ChromeCookieError {
+                    case .keychain: code = .signIn
+                    case .invalidCookie, .encryption: code = .invalidData
+                    case .unavailable, .profile: code = .unavailable
+                    default: code = .protocolFailure
+                    }
+                    AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                 case .success(let sessions):
                     self.chromeProfiles = sessions.map(\.profile)
                     guard sessions.count == 1, let session = sessions.first else {
+                        self.chromeNeedsAttention = true
                         self.chromeMessage = sessions.isEmpty
                             ? "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
                             : "Choose the Chrome profile to connect."
@@ -995,7 +1010,7 @@ class UsageManager: ObservableObject {
                 completion(nil)
                 return
             }
-            NSLog("✅ Got org ID from bootstrap: \(lastActiveOrgId)")
+            NSLog("Claude organization resolved")
             completion(lastActiveOrgId)
         }
     }
@@ -1020,6 +1035,7 @@ class UsageManager: ObservableObject {
 
                     self?.errorMessage = "Could not get org ID from cookie"
                     self?.isLoading = false
+                    AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
 
                 return
             }
@@ -1181,21 +1197,23 @@ class UsageManager: ObservableObject {
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
 
-        NSLog("🔍 Fetching from: \(urlString)")
+        NSLog("Fetching Claude usage")
 
         performRequest(request) { [weak self] data, response, error in
 
                 self?.isLoading = false
 
                 if let error = error {
-                    NSLog("❌ Error: \(error.localizedDescription)")
                     self?.errorMessage = "Network error"
+                    let code: DiagnosticErrorCode = (error as NSError).code == NSURLErrorTimedOut ? .timeout : .protocolFailure
+                    AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                     self?.updateStatusBar()
                     return
                 }
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     self?.errorMessage = "Invalid response"
+                    AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
                     self?.updateStatusBar()
                     return
                 }
@@ -1207,6 +1225,8 @@ class UsageManager: ObservableObject {
                     self?.parseUsageData(data)
                 } else {
                     self?.errorMessage = "HTTP \(httpResponse.statusCode)"
+                    AppDiagnostics.shared.recordFailure(provider: .claude,
+                        code: [401, 403].contains(httpResponse.statusCode) ? .signIn : .protocolFailure)
                 }
 
                 self?.updateStatusBar()
@@ -1223,6 +1243,7 @@ class UsageManager: ObservableObject {
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 errorMessage = "Invalid JSON"
+                AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
                 return
             }
 
@@ -1250,6 +1271,7 @@ class UsageManager: ObservableObject {
                 sessionResetsAt = nil
                 hasFetchedData = false
                 errorMessage = "Claude five-hour usage is unavailable or invalid. Refresh to try again."
+                AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
                 return
             }
             sessionUtilization = sessionUtil
@@ -1331,12 +1353,14 @@ class UsageManager: ObservableObject {
             lastUpdated = Date()
             errorMessage = nil
             hasFetchedData = true
+            AppDiagnostics.shared.recordRecovery(provider: .claude)
 
             // Update percentage values for progress bars
             updatePercentages()
         } catch {
             NSLog("❌ Parse error: \(error.localizedDescription)")
             errorMessage = "Parse error"
+            AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
         }
     }
 
@@ -2018,6 +2042,7 @@ struct UsageView: View {
     @State private var measuredHeight: CGFloat = 250
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance_mode") private var appearanceMode: String = "system"
+    @State private var diagnosticsEnabled = AppDiagnostics.shared.enabled
 
     private let maxPopupHeight: CGFloat = 600
 
@@ -2228,12 +2253,11 @@ struct UsageView: View {
                 claudeExtras
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(usageManager.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
-                        .font(.caption)
-                        .foregroundColor(Color.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    chromeButtons
+                    chromeConnectionControls
                 }
+            }
+            if usageManager.hasFetchedData && (usageManager.isDetectingChrome || usageManager.chromeNeedsAttention) {
+                chromeConnectionControls
             }
         }
         .glassCard()
@@ -2358,6 +2382,34 @@ struct UsageView: View {
                 .secondaryButton()
         }
         .controlSize(.small)
+    }
+
+    private var chromeConnectionControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if usageManager.isDetectingChrome {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading Claude sessions from Chrome…").font(.caption)
+                }
+            } else {
+                Text(usageManager.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                    .font(.caption)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("macOS may ask for access to Chrome Safe Storage to read your session. Approve in the system dialog; LimitFuel never asks for your password.")
+                .font(.caption2)
+                .foregroundColor(Color.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            chromeButtons
+            ForEach(usageManager.chromeProfiles) { profile in
+                Button("Use \(profile.name) (\(profile.id))") {
+                    usageManager.detectChromeSession(interactive: true, profileID: profile.id)
+                }
+                .disabled(usageManager.isDetectingChrome)
+                .font(.caption)
+            }
+        }
     }
 
     // Anthropic service status (compact; expandable on issue)
@@ -2509,6 +2561,17 @@ struct UsageView: View {
             }
 
             settingsCard("General") {
+                settingToggle("Send crash and error reports", detail: "Helps improve LimitFuel using Sentry. Excludes credentials, account details and application logs.", isOn: Binding(
+                    get: { diagnosticsEnabled },
+                    set: { enabled in
+                        diagnosticsEnabled = enabled
+                        AppDiagnostics.shared.setEnabled(enabled)
+                    }
+                ))
+                Text(AppDiagnostics.shared.statusText)
+                    .font(.caption2)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 settingToggle("Open at Login", detail: nil, isOn: Binding(
                     get: { usageManager.openAtLogin },
                     set: { newValue in
@@ -2621,26 +2684,8 @@ struct UsageView: View {
     }
 
     private var chromeSession: some View {
-        let connected = usageManager.hasFetchedData && usageManager.errorMessage == nil
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: connected ? "checkmark.circle.fill" : "link.circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(connected ? .green : Color.secondaryText)
-                Text(usageManager.chromeMessage ?? "Not connected yet")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            chromeButtons
-
-            ForEach(usageManager.chromeProfiles) { profile in
-                Button("Use \(profile.name) (\(profile.id))") {
-                    usageManager.detectChromeSession(interactive: true, profileID: profile.id)
-                }
-                .disabled(usageManager.isDetectingChrome)
-                .font(.caption)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            chromeConnectionControls
 
             HStack {
                 if let checked = usageManager.lastChromeCheck {

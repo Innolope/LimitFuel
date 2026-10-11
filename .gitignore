@@ -82,3 +82,6 @@ app/.release-lock/
 # Internal docs (kept local, not on public GitHub)
 NOTIFICATIONS.md
 internal-docs/
+
+# Checksum-pinned SDK cache (downloaded during build)
+app/.dependencies/

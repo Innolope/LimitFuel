@@ -20,6 +20,10 @@ Read with the active plan before engineering changes.
 - Local checks: Tests/run.sh, Tests/lint.sh and universal app compile. No project
   checks existed initially; .codex/quality-gates.json configures the existing
   personal commit hook. Hosted CI and branch protections are separate gates.
+- Diagnostics defaults on with a persistent immediate opt-out. Only fixed provider/error
+  codes and sanitized crash stacks; no account details, credentials, raw logs or
+  request data. Deduplicate until recovery, bound application errors to 20/hour,
+  and use offline fake transport tests. Missing Sentry configuration is visible.
 - Distribution defaults to Innolope Developer ID; secrets stay in Keychain/local
   ignored files. Packaging requires Accepted notarization, stapling and Gatekeeper;
   publish only fully verified artifacts with clean source provenance. No auto-retry.
