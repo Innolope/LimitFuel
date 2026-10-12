@@ -52,7 +52,7 @@ struct ClaudeAcceptance {
         return object
     }
     static func manager() -> (UsageManager, URLSession, UserDefaults, String, URL) {
-        let suite = "ClaudeAcceptance.\(UUID().uuidString)"
+        let suite = "LimitFuel.ClaudeAcceptance.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.set(false, forKey: "chrome_detection_enabled")
         defaults.set(false, forKey: "usage_notifications_enabled")

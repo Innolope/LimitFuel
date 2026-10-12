@@ -288,7 +288,7 @@ struct ProviderUpdateAgeTests {
                    "all provider requests consumed declared synthetic outcomes")
     }
     static func main() {
-        let suite = "ProviderUpdateAgeTests.\(UUID().uuidString)"
+        let suite = "LimitFuel.ProviderUpdateAge.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         for key in ["chrome_detection_enabled", "usage_notifications_enabled", "status_notifications_enabled"] {
             defaults.set(false, forKey: key)

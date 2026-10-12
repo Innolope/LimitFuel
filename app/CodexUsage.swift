@@ -38,26 +38,37 @@ struct CodexSnapshot {
 
     var menuBarOptions: [MenuBarWindowOption] {
         let nameCounts = Dictionary(grouping: buckets, by: \.name).mapValues { $0.count }
+        // The usual single "codex" bucket needs no prefix: "Weekly · 7d".
+        let showsBucket = buckets.count > 1 || buckets.contains { $0.name.lowercased() != "codex" }
         return buckets.flatMap { bucket in
             let name = (nameCounts[bucket.name] ?? 0) > 1 ? "\(bucket.name) (\(bucket.id))" : bucket.name
             return bucket.displayWindows.map { entry in
-                let duration: String
-                if let minutes = entry.window.windowDurationMins {
-                    if minutes > 0 && minutes % 1440 == 0 { duration = "\(minutes / 1440)d" }
-                    else if minutes > 0 && minutes % 60 == 0 { duration = "\(minutes / 60)h" }
-                    else { duration = "\(minutes)m" }
-                } else { duration = "duration unavailable" }
-                let role = entry.id == "primary" ? "Primary" : "Secondary"
+                let window = Self.windowLabel(minutes: entry.window.windowDurationMins,
+                                              role: entry.id == "primary" ? "Primary" : "Secondary")
                 // Digest the exact UTF-8 bytes so delimiters and Unicode cannot
                 // alias roles, and unusually long graphemes cannot exceed the
                 // preference ID limit. Labels/order/account names are excluded.
                 let bucketID = SHA256.hash(data: Data(bucket.id.utf8)).map { String(format: "%02x", $0) }.joined()
                 return MenuBarWindowOption(id: "codex:\(bucketID):\(entry.id)", provider: .codex,
-                    label: "\(name) · \(role) · \(duration)", percent: entry.window.usedPercent,
+                    label: showsBucket ? "\(name) · \(window)" : window, percent: entry.window.usedPercent,
                     durationMinutes: entry.window.windowDurationMins, isPreferredBucket: bucket.id == "codex",
                     resetsAt: entry.window.resetsAt)
             }
         }
+    }
+
+    // Matches the popup meter titles: "Session · 5h", "Weekly · 7d", "Primary · 2h".
+    static func windowLabel(minutes: Int?, role: String) -> String {
+        guard let minutes = minutes, minutes > 0 else { return role }
+        if minutes == 300 { return "Session · 5h" }
+        if minutes == 10080 { return "Weekly · 7d" }
+        return "\(role) · \(durationLabel(minutes))"
+    }
+
+    static func durationLabel(_ minutes: Int) -> String {
+        if minutes % 1440 == 0 { return "\(minutes / 1440)d" }
+        if minutes % 60 == 0 { return "\(minutes / 60)h" }
+        return "\(minutes)m"
     }
 }
 
@@ -111,6 +122,10 @@ struct CodexClient {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
+        // A child that exits early must fail the fetch with EPIPE, not kill the app with SIGPIPE.
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) >= 0 else {
+            throw CodexUsageError.protocolFailure
+        }
         do { try process.run() } catch { throw CodexUsageError.unavailable }
         // Parent must close its copy of the child's writer so EOF is observable.
         output.fileHandleForWriting.closeFile()
@@ -146,6 +161,7 @@ struct CodexClient {
         var buffer = Data()
         var total = 0
         var accountEstablished = false
+        var accountUpdated = false
         func receive(id: Int) throws -> [String: Any] {
             while DispatchTime.now().uptimeNanoseconds < deadline {
                 if let newline = buffer.firstIndex(of: 10) {
@@ -163,7 +179,11 @@ struct CodexClient {
                             throw CodexUsageError.signIn
                         }
                         if message["method"] as? String == "account/updated", accountEstablished {
-                            throw CodexUsageError.signIn
+                            // Codex's own startup notice can arrive after account/read.
+                            // Only a non-ChatGPT mode is a sign-out; otherwise confirm below.
+                            let mode = (message["params"] as? [String: Any])?["authMode"]
+                            if let mode = mode as? String, mode != "chatgpt" { throw CodexUsageError.signIn }
+                            accountUpdated = true
                         }
                         continue
                     }
@@ -195,21 +215,36 @@ struct CodexClient {
             throw CodexUsageError.timeout
         }
         try send(["id": 1, "method": "initialize", "params": ["clientInfo": [
-            "name": "limitfuel", "title": "LimitFuel", "version": "1.3.5"
+            "name": "limitfuel", "title": "LimitFuel",
+            "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         ]]])
         _ = try receive(id: 1)
         try send(["method": "initialized", "params": [:]])
-        try send(["id": 2, "method": "account/read", "params": ["refreshToken": false]])
-        let accountResult = try receive(id: 2)
-        guard let account = accountResult["account"] as? [String: Any],
-              account["type"] as? String == "chatgpt" else { throw CodexUsageError.signIn }
-        // Startup auth announcements precede account/read on current Codex.
-        // Once the account is established, a change invalidates these limits.
+        func readAccount(id: Int) throws -> String? {
+            try send(["id": id, "method": "account/read", "params": ["refreshToken": false]])
+            guard let account = try receive(id: id)["account"] as? [String: Any],
+                  account["type"] as? String == "chatgpt" else { throw CodexUsageError.signIn }
+            return (account["email"] as? String).map { String($0.prefix(200)) }
+        }
+        func readLimits(id: Int) throws -> [CodexBucket] {
+            try send(["id": id, "method": "account/rateLimits/read"])
+            return try Self.parseLimits(JSONSerialization.data(withJSONObject: receive(id: id)))
+        }
+        var label = try readAccount(id: 2)
+        // Updates before this point are startup announcements. Later ones may be
+        // the same announcement racing account/read, or a real account switch.
         accountEstablished = true
-        let label = (account["email"] as? String).map { String($0.prefix(200)) }
-        try send(["id": 3, "method": "account/rateLimits/read"])
-        let result = try receive(id: 3)
-        let buckets = try Self.parseLimits(JSONSerialization.data(withJSONObject: result))
+        var buckets = try readLimits(id: 3)
+        if accountUpdated {
+            accountUpdated = false
+            let confirmed = try readAccount(id: 4)
+            if confirmed != label {
+                label = confirmed
+                buckets = try readLimits(id: 5)
+            }
+            // Still changing: report a transient failure and keep the last values.
+            guard !accountUpdated else { throw CodexUsageError.protocolFailure }
+        }
         return CodexSnapshot(accountLabel: label, buckets: buckets)
     }
 

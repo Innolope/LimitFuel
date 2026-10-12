@@ -44,6 +44,7 @@ struct UsageBar: View {
     var segments: Int = 30
     var height: CGFloat = 6
     var glow = false
+    var accessibilityText: String? = nil
 
     var body: some View {
         let lit = litSegments(value, of: segments)
@@ -56,20 +57,22 @@ struct UsageBar: View {
         }
         .frame(height: height)
         .accessibilityElement(children: .ignore)
-        .accessibilityValue("\(Int(max(0, min(1, value)) * 100)) percent used")
+        .accessibilityValue(accessibilityText ?? "\(Int(max(0, min(1, value)) * 100)) percent used")
     }
 }
 
 // One usage limit: name, big percentage, glowing segment meter and reset time.
+// Shows used or remaining like the menu bar; warning colors follow usage.
 struct MeterRow: View {
     let title: String
     let subtitle: String?
-    let percent: Int?
-    let fraction: Double
-    let color: Color
+    let used: Double?            // raw used percentage, 0...100
+    let mode: MenuBarPercentageMode
+    let base: Color
     let footnote: String?
 
     var body: some View {
+        let percent = used.map { mode.displayedPercent(used: $0) }
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title)
@@ -92,7 +95,9 @@ struct MeterRow: View {
                     }
                 }
             }
-            UsageBar(value: percent == nil ? 0 : fraction, color: color, height: 8, glow: true)
+            UsageBar(value: used.map { mode.displayedFraction(used: $0) } ?? 0,
+                     color: meterColor((used ?? 0) / 100, base: base), height: 8, glow: true,
+                     accessibilityText: used.map { mode.accessibilityValue(used: $0) })
             if let footnote = footnote {
                 Label(footnote, systemImage: "clock.arrow.circlepath")
                     .font(.system(size: 10))
@@ -338,6 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var hotKeyRef: EventHotKeyRef?
     let popupPresentation = PopupPresentation()
     var menuBarPreferences = MenuBarPreferences()
+    var registersLoginItem = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDiagnostics.shared.start()
@@ -360,6 +366,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // Initialize managers
         usageManager = UsageManager(statusItem: statusItem, delegate: self)
+        if registersLoginItem {
+            // Login items belong to a bundle ID; carry the legacy choice over once.
+            usageManager.applyLoginItem(true)
+            usageManager.loadSettings()
+        }
         statusManager = StatusManager()
         updateManager = UpdateManager()
         codexManager = CodexUsageManager()
@@ -700,13 +711,38 @@ extension NSColor {
     }
 }
 
+// LimitFuel 1.3 and upstream ClaudeUsageBar shared com.claude.usagebar. Copy
+// those settings into LimitFuel's own domain once, before anything reads them.
+// The legacy domain is left intact: upstream's app may still use it.
+enum LegacySettings {
+    static let domain = "com.claude.usagebar"
+    static let markerKey = "legacy_settings_migrated"
+
+    /// Returns true when the legacy app was set to open at login.
+    @discardableResult
+    static func migrate(into defaults: UserDefaults, legacy: [String: Any]?) -> Bool {
+        guard !defaults.bool(forKey: markerKey) else { return false }
+        for (key, value) in legacy ?? [:] where key != markerKey && defaults.object(forKey: key) == nil {
+            defaults.set(value, forKey: key)
+        }
+        defaults.set(true, forKey: markerKey)
+        guard let login = legacy?["open_at_login"] as? NSNumber,
+              CFGetTypeID(login) == CFBooleanGetTypeID() else { return false }
+        return login.boolValue
+    }
+}
+
 // Main entry point
 #if !ACCEPTANCE_TESTS
 @main
 struct Main {
     static func main() {
+        let defaults = UserDefaults.standard
+        let registersLoginItem = LegacySettings.migrate(into: defaults,
+            legacy: defaults.persistentDomain(forName: LegacySettings.domain))
         let app = NSApplication.shared
         let delegate = AppDelegate()
+        delegate.registersLoginItem = registersLoginItem
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         app.run()
@@ -722,6 +758,10 @@ class UsageManager: ObservableObject {
     private var resolvedOrganizationID: String?
     @Published var sessionUsage: Int = 0
     @Published var sessionUtilization: Double = 0
+    // Unrounded used percentages; meters and the menu bar round them the same way.
+    @Published var weeklyUtilization: Double = 0
+    @Published var weeklySonnetUtilization: Double = 0
+    @Published var weeklyFableUtilization: Double = 0
     @Published var sessionLimit: Int = 100
     @Published var weeklyUsage: Int = 0
     @Published var weeklyLimit: Int = 100
@@ -763,10 +803,24 @@ class UsageManager: ObservableObject {
     @Published var chromeProfileName: String?
     @Published var lastChromeCheck: Date?
     @Published var chromeDetectionEnabled = true
+    @Published private(set) var lastChromeCheckWasInteractive = false
     private(set) var lastFetchStartedAt: Date?
 
     // Chrome sync health is independent of credentials accepted by the usage API.
     var showsClaudeConnectionControls: Bool { !hasFetchedData }
+
+    // Settings shows the working connection instead of a background sync failure.
+    var connectionSummary: String? {
+        guard hasFetchedData else { return nil }
+        guard chromeDetectionEnabled else { return "Connected with a manual cookie" }
+        return chromeProfileName.map { "Connected via Chrome · \($0)" } ?? "Connected via Chrome"
+    }
+
+    // While connected, only a failed Detect the user started is worth a message.
+    var settingsChromeMessage: String? {
+        guard hasFetchedData else { return chromeMessage }
+        return lastChromeCheckWasInteractive && chromeNeedsAttention ? chromeMessage : nil
+    }
 
     private var statusItem: NSStatusItem?
     private var sessionCookie: String = ""
@@ -775,7 +829,7 @@ class UsageManager: ObservableObject {
     private let defaults: UserDefaults
     private let chromeReader: ChromeCookieReader
     private var connectionRevision = UUID()
-    private let chromeQueue = DispatchQueue(label: "com.claude.usagebar.chrome", qos: .userInitiated)
+    private let chromeQueue = DispatchQueue(label: "com.innolope.limitfuel.chrome", qos: .userInitiated)
     private var activeRequests: [UUID: URLSessionDataTask] = [:]
     private lazy var apiSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -810,6 +864,7 @@ class UsageManager: ObservableObject {
     func detectChromeSession(interactive: Bool = false, chooseProfile: Bool = false, profileID: String? = nil) {
         guard !isDetectingChrome, interactive || chromeDetectionEnabled else { return }
         isDetectingChrome = true
+        lastChromeCheckWasInteractive = interactive
         chromeMessage = nil
         chromeNeedsAttention = false
         chromeProfiles = []
@@ -1055,6 +1110,9 @@ class UsageManager: ObservableObject {
         weeklyUsage = 0
         weeklySonnetUsage = 0
         weeklyFableUsage = 0
+        weeklyUtilization = 0
+        weeklySonnetUtilization = 0
+        weeklyFableUtilization = 0
         weeklyLimit = 100
         weeklySonnetLimit = 100
         weeklyFableLimit = 100
@@ -1416,6 +1474,7 @@ class UsageManager: ObservableObject {
                     label: "Weekly · 7d", percent: weeklyUtil, durationMinutes: 10080, isPreferredBucket: true,
                     resetsAt: resetDate(sevenDay["resets_at"])))
                 weeklyUsage = Int(weeklyUtil)
+                weeklyUtilization = weeklyUtil
                 weeklyResetsAt = resetDate(sevenDay["resets_at"])
             }
 
@@ -1426,6 +1485,7 @@ class UsageManager: ObservableObject {
                     label: "Sonnet · 7d", percent: sonnetUtil, durationMinutes: 10080, isPreferredBucket: false,
                     resetsAt: resetDate(sevenDaySonnet["resets_at"])))
                 weeklySonnetUsage = Int(sonnetUtil)
+                weeklySonnetUtilization = sonnetUtil
                 weeklySonnetResetsAt = resetDate(sevenDaySonnet["resets_at"])
             }
 
@@ -1445,6 +1505,7 @@ class UsageManager: ObservableObject {
                         label: "Fable · 7d", percent: percent, durationMinutes: 10080, isPreferredBucket: false,
                         resetsAt: resetDate(fable["resets_at"])))
                     weeklyFableUsage = Int(percent)
+                    weeklyFableUtilization = percent
                     weeklyFableResetsAt = resetDate(fable["resets_at"])
                 }
             }
@@ -1562,16 +1623,29 @@ struct StatusIncident: Identifiable, Equatable {
     let componentIds: [String]
 }
 
-struct AffectedComponent: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let status: String           // degraded_performance | partial_outage | major_outage
-}
-
 struct StatusComponent: Identifiable, Equatable {
     let id: String
     let name: String
     let status: String           // operational | degraded_performance | ...
+    var updatedAt: Date? = nil   // when the component's status last changed
+}
+
+struct StatusSummary: Equatable {
+    let indicator: String
+    let description: String
+    let incidents: [StatusIncident]
+    let components: [StatusComponent]
+}
+
+// Status posts older than six hours are treated as resolved; long incidents are
+// usually fixed well before the status page is updated.
+enum StatusFreshness {
+    static let maximumAge: TimeInterval = 6 * 3600
+
+    static func isExpired(_ postedAt: Date?, now: Date) -> Bool {
+        guard let postedAt = postedAt else { return false }
+        return now.timeIntervalSince(postedAt) > maximumAge
+    }
 }
 
 private let defaultTrackedComponents: [StatusComponent] = [
@@ -1591,7 +1665,6 @@ class StatusManager: ObservableObject {
     @Published var indicator: String = "none"        // none | minor | major | critical (raw, global)
     @Published var statusDescription: String = "All systems operational"
     @Published var incidents: [StatusIncident] = []
-    @Published var affectedComponents: [AffectedComponent] = []
     @Published var allComponents: [StatusComponent] = defaultTrackedComponents
     @Published var selectedComponentIds: Set<String> = defaultTrackedComponentIdSet
     @Published var lastUpdated: Date?
@@ -1599,13 +1672,23 @@ class StatusManager: ObservableObject {
 
     // Canonical URL (status.anthropic.com 302-redirects here)
     private let endpoint = URL(string: "https://status.claude.com/api/v2/summary.json")!
+    private let defaults: UserDefaults
+    private let notify: (String, String) -> Void
 
-    init() {
-        if let saved = UserDefaults.standard.array(forKey: "tracked_component_ids") as? [String] {
+    init(defaults: UserDefaults = .standard, notify: @escaping (String, String) -> Void = { title, body in
+        let notification = NSUserNotification()
+        notification.title = title
+        notification.informativeText = body
+        notification.soundName = NSUserNotificationDefaultSoundName
+        NSUserNotificationCenter.default.deliver(notification)
+    }) {
+        self.defaults = defaults
+        self.notify = notify
+        if let saved = defaults.array(forKey: "tracked_component_ids") as? [String] {
             selectedComponentIds = Set(saved)
         }
         // Clean up legacy debug pref if present
-        UserDefaults.standard.removeObject(forKey: "status_preview_mode")
+        defaults.removeObject(forKey: "status_preview_mode")
     }
 
     func toggleComponent(_ id: String) {
@@ -1614,30 +1697,51 @@ class StatusManager: ObservableObject {
         } else {
             selectedComponentIds.insert(id)
         }
-        UserDefaults.standard.set(Array(selectedComponentIds), forKey: "tracked_component_ids")
+        defaults.set(Array(selectedComponentIds), forKey: "tracked_component_ids")
     }
 
     func isTracked(_ id: String) -> Bool {
         selectedComponentIds.contains(id)
     }
 
-    // MARK: - Filtered/effective views (respect tracked components)
+    // MARK: - Visible views (tracked components, posts at most six hours old)
 
-    var filteredAffectedComponents: [AffectedComponent] {
-        affectedComponents.filter { selectedComponentIds.contains($0.id) }
-    }
-
-    var filteredIncidents: [StatusIncident] {
+    private func trackedIncidents() -> [StatusIncident] {
         incidents.filter { incident in
             guard !incident.componentIds.isEmpty else { return true }
             return incident.componentIds.contains(where: { selectedComponentIds.contains($0) })
         }
     }
 
-    var effectiveIndicator: String {
-        let trackedComponents = allComponents.filter { selectedComponentIds.contains($0.id) }
-        let max = trackedComponents.map { severity(for: $0.status) }.max() ?? 0
-        switch max {
+    func visibleIncidents(now: Date = Date()) -> [StatusIncident] {
+        trackedIncidents().filter { !StatusFreshness.isExpired($0.updatedAt, now: now) }
+    }
+
+    func visibleAffectedComponents(now: Date = Date()) -> [StatusComponent] {
+        let fresh = Set(visibleIncidents(now: now).flatMap(\.componentIds))
+        let expired = Set(incidents.filter { StatusFreshness.isExpired($0.updatedAt, now: now) }.flatMap(\.componentIds))
+        return allComponents.filter { component in
+            guard selectedComponentIds.contains(component.id), component.status != "operational" else { return false }
+            if fresh.contains(component.id) { return true }
+            if let updated = component.updatedAt { return !StatusFreshness.isExpired(updated, now: now) }
+            return !expired.contains(component.id)
+        }
+    }
+
+    func effectiveIndicator(now: Date) -> String {
+        indicatorLevel(for: visibleAffectedComponents(now: now))
+    }
+
+    // The tracked indicator before expiry, used to keep expiry silent.
+    private var trackedIndicator: String {
+        indicatorLevel(for: allComponents.filter { selectedComponentIds.contains($0.id) })
+    }
+
+    var filteredIncidents: [StatusIncident] { visibleIncidents() }
+    var filteredAffectedComponents: [StatusComponent] { visibleAffectedComponents() }
+
+    private func indicatorLevel(for components: [StatusComponent]) -> String {
+        switch components.map({ severity(for: $0.status) }).max() ?? 0 {
         case 0:  return "none"
         case 1:  return "minor"
         case 2:  return "major"
@@ -1659,104 +1763,92 @@ class StatusManager: ObservableObject {
     func fetch() {
         let request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            guard let self = self, let data = data else { return }
-            self.parse(data)
+            guard let data = data, let summary = Self.decode(data) else { return }
+            DispatchQueue.main.async { self?.apply(summary) }
         }.resume()
     }
 
-    private func parse(_ data: Data) {
+    static func decode(_ data: Data) -> StatusSummary? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let status = json["status"] as? [String: Any],
               let indicator = status["indicator"] as? String,
               let desc = status["description"] as? String else {
-            return
+            return nil
         }
 
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let isoNoFrac = ISO8601DateFormatter()
         isoNoFrac.formatOptions = [.withInternetDateTime]
-
-        var parsedIncidents: [StatusIncident] = []
-        if let raw = json["incidents"] as? [[String: Any]] {
-            for inc in raw {
-                guard let id = inc["id"] as? String,
-                      let name = inc["name"] as? String,
-                      let st = inc["status"] as? String else { continue }
-                if st == "resolved" || st == "postmortem" { continue }
-                let updates = inc["incident_updates"] as? [[String: Any]] ?? []
-                let latest = (updates.first?["body"] as? String) ?? ""
-                let dateStr = (updates.first?["created_at"] as? String) ?? (inc["updated_at"] as? String)
-                let updatedAt = dateStr.flatMap { iso.date(from: $0) ?? isoNoFrac.date(from: $0) }
-                let compIds = (inc["components"] as? [[String: Any]] ?? [])
-                    .compactMap { $0["id"] as? String }
-                parsedIncidents.append(StatusIncident(
-                    id: id, name: name, status: st, latestUpdate: latest,
-                    updatedAt: updatedAt,
-                    componentIds: compIds
-                ))
-            }
+        func date(_ value: Any?) -> Date? {
+            (value as? String).flatMap { iso.date(from: $0) ?? isoNoFrac.date(from: $0) }
         }
 
-        var parsedAffected: [AffectedComponent] = []
-        var parsedAll: [StatusComponent] = []
-        if let raw = json["components"] as? [[String: Any]] {
-            for c in raw {
-                guard let id = c["id"] as? String,
-                      let name = c["name"] as? String,
-                      let st = c["status"] as? String else { continue }
-                parsedAll.append(StatusComponent(id: id, name: name, status: st))
-                if st != "operational" {
-                    parsedAffected.append(AffectedComponent(id: id, name: name, status: st))
-                }
-            }
+        var incidents: [StatusIncident] = []
+        for inc in json["incidents"] as? [[String: Any]] ?? [] {
+            guard let id = inc["id"] as? String,
+                  let name = inc["name"] as? String,
+                  let st = inc["status"] as? String else { continue }
+            if st == "resolved" || st == "postmortem" { continue }
+            let updates = inc["incident_updates"] as? [[String: Any]] ?? []
+            // The latest post is what the card shows, and what expiry is measured from.
+            let latest = updates.max { (date($0["created_at"]) ?? .distantPast) < (date($1["created_at"]) ?? .distantPast) }
+            incidents.append(StatusIncident(
+                id: id, name: name, status: st,
+                latestUpdate: (latest?["body"] as? String) ?? "",
+                updatedAt: date(latest?["created_at"]) ?? date(inc["updated_at"]) ?? date(inc["created_at"]),
+                componentIds: (inc["components"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+            ))
         }
 
-        DispatchQueue.main.async {
-            let isFirstFetch = !self.hasFetched
-
-            self.indicator = indicator
-            self.statusDescription = desc
-            self.incidents = parsedIncidents
-            self.affectedComponents = parsedAffected
-            if !parsedAll.isEmpty {
-                self.allComponents = parsedAll
-                // First time we see real components: track all except Claude for Government by default
-                if UserDefaults.standard.array(forKey: "tracked_component_ids") == nil {
-                    let defaultIds = parsedAll
-                        .filter { !$0.name.localizedCaseInsensitiveContains("Government") }
-                        .map { $0.id }
-                    self.selectedComponentIds = Set(defaultIds)
-                    UserDefaults.standard.set(Array(self.selectedComponentIds),
-                                              forKey: "tracked_component_ids")
-                }
-            }
-            self.lastUpdated = Date()
-            self.hasFetched = true
-
-            // Notify on transitions of EFFECTIVE (filtered) indicator
-            let effective = self.effectiveIndicator
-            let previous = UserDefaults.standard.string(forKey: "last_effective_indicator")
-            if !isFirstFetch, let previous = previous, previous != effective {
-                self.notifyStatusChange(to: effective, description: desc)
-            }
-            UserDefaults.standard.set(effective, forKey: "last_effective_indicator")
+        var components: [StatusComponent] = []
+        for c in json["components"] as? [[String: Any]] ?? [] {
+            guard let id = c["id"] as? String,
+                  let name = c["name"] as? String,
+                  let st = c["status"] as? String else { continue }
+            components.append(StatusComponent(id: id, name: name, status: st, updatedAt: date(c["updated_at"])))
         }
+        return StatusSummary(indicator: indicator, description: desc, incidents: incidents, components: components)
+    }
+
+    func apply(_ summary: StatusSummary, now: Date = Date()) {
+        let isFirstFetch = !hasFetched
+
+        indicator = summary.indicator
+        statusDescription = summary.description
+        incidents = summary.incidents
+        if !summary.components.isEmpty {
+            allComponents = summary.components
+            // First time we see real components: track all except Claude for Government by default
+            if defaults.array(forKey: "tracked_component_ids") == nil {
+                let defaultIds = summary.components
+                    .filter { !$0.name.localizedCaseInsensitiveContains("Government") }
+                    .map { $0.id }
+                selectedComponentIds = Set(defaultIds)
+                defaults.set(Array(selectedComponentIds), forKey: "tracked_component_ids")
+            }
+        }
+        lastUpdated = now
+        hasFetched = true
+
+        // Notify on transitions of the visible indicator. Expiry hides an alert
+        // without announcing a recovery the status page has not posted.
+        let effective = effectiveIndicator(now: now)
+        let previous = defaults.string(forKey: "last_effective_indicator")
+        let expiredOnly = effective == "none" && trackedIndicator != "none"
+        if !isFirstFetch, let previous = previous, previous != effective, !expiredOnly {
+            notifyStatusChange(to: effective, description: summary.description)
+        }
+        defaults.set(effective, forKey: "last_effective_indicator")
     }
 
     private func notifyStatusChange(to indicator: String, description: String) {
-        guard UserDefaults.standard.bool(forKey: "status_notifications_enabled") else { return }
-
-        let notification = NSUserNotification()
+        guard defaults.bool(forKey: "status_notifications_enabled") else { return }
         if indicator == "none" {
-            notification.title = "Claude is back online"
-            notification.informativeText = "All systems operational"
+            notify("Claude is back online", "All systems operational")
         } else {
-            notification.title = "Claude status: \(description)"
-            notification.informativeText = "Visit status.anthropic.com for details"
+            notify("Claude status: \(description)", "Visit status.claude.com for details")
         }
-        notification.soundName = NSUserNotificationDefaultSoundName
-        NSUserNotificationCenter.default.deliver(notification)
         NSLog("📬 Sent status-change notification: \(indicator)")
     }
 }
@@ -2241,7 +2333,7 @@ struct UsageView: View {
 
             banners
             claudeCard
-            CodexUsageView(manager: codexManager)
+            CodexUsageView(manager: codexManager, mode: menuBarPreferences.percentageMode)
 
             if statusManager.hasFetched {
                 serviceStatus
@@ -2362,15 +2454,13 @@ struct UsageView: View {
 
             if usageManager.hasFetchedData {
                 MeterRow(title: "Session", subtitle: "5h",
-                         percent: Int(usageManager.sessionPercentage * 100),
-                         fraction: usageManager.sessionPercentage,
-                         color: meterColor(usageManager.sessionPercentage, base: Brand.claude),
+                         used: usageManager.sessionUtilization, mode: menuBarPreferences.percentageMode,
+                         base: Brand.claude,
                          footnote: usageManager.sessionResetsAt.map { resetDescription($0) })
                 if usageManager.showsClaudeWeeklyUsage {
                     MeterRow(title: "Weekly", subtitle: "7d",
-                             percent: Int(usageManager.weeklyPercentage * 100),
-                             fraction: usageManager.weeklyPercentage,
-                             color: meterColor(usageManager.weeklyPercentage, base: Brand.claude),
+                             used: usageManager.weeklyUtilization, mode: menuBarPreferences.percentageMode,
+                             base: Brand.claude,
                              footnote: usageManager.weeklyResetsAt.map { resetDescription($0) })
                 }
                 claudeExtras
@@ -2391,16 +2481,14 @@ struct UsageView: View {
         // use (new model, counted separately; hidden while idle to avoid clutter).
         if usageManager.hasWeeklySonnet {
             MeterRow(title: "Sonnet", subtitle: "7d",
-                     percent: Int(usageManager.weeklySonnetPercentage * 100),
-                     fraction: usageManager.weeklySonnetPercentage,
-                     color: meterColor(usageManager.weeklySonnetPercentage, base: Brand.claude),
+                     used: usageManager.weeklySonnetUtilization, mode: menuBarPreferences.percentageMode,
+                     base: Brand.claude,
                      footnote: usageManager.weeklySonnetResetsAt.map { resetDescription($0) })
         }
         if fableActive {
             MeterRow(title: "Fable", subtitle: "7d",
-                     percent: Int(usageManager.weeklyFablePercentage * 100),
-                     fraction: usageManager.weeklyFablePercentage,
-                     color: meterColor(usageManager.weeklyFablePercentage, base: Brand.claude),
+                     used: usageManager.weeklyFableUtilization, mode: menuBarPreferences.percentageMode,
+                     base: Brand.claude,
                      footnote: usageManager.weeklyFableResetsAt.map { resetDescription($0) })
         }
         if extraActive {
@@ -2433,9 +2521,9 @@ struct UsageView: View {
         let spentMinor = usageManager.extraSpentMinor
         let limitMinor = usageManager.extraLimitMinor
         let pct = limitMinor > 0 ? Double(spentMinor) / Double(limitMinor) : 0
-        let pctInt = Int((pct * 100).rounded())
-        // Show the exact % up to the limit; once over, just say "over limit".
-        let pctLabel = pctInt > 100 ? "over limit" : "\(pctInt)%"
+        let mode = menuBarPreferences.percentageMode
+        // Show the exact % up to the limit, as used or remaining; once over, "over limit".
+        let pctLabel = pct > 1.005 ? "over limit" : "\(mode.displayedPercent(used: pct * 100))%"
         let fmt: (Int) -> String = { minor in
             let v = Double(minor) / 100.0
             return usageManager.creditCurrency == "USD"
@@ -2473,11 +2561,12 @@ struct UsageView: View {
             // Spend vs monthly limit — only when there's actual spend.
             if usageManager.hasCreditUsage {
                 if limitMinor > 0 {
-                    UsageBar(value: min(pct, 1.0), color: meterColor(pct, base: Brand.claude), height: 8, glow: true)
+                    UsageBar(value: mode.displayedFraction(used: pct * 100), color: meterColor(pct, base: Brand.claude),
+                             height: 8, glow: true, accessibilityText: mode.accessibilityValue(used: pct * 100))
                 }
-                Text(limitMinor > 0
-                     ? "\(fmt(spentMinor)) of \(fmt(limitMinor)) · \(pctLabel)"
-                     : "\(fmt(spentMinor)) spent")
+                Text(limitMinor == 0 ? "\(fmt(spentMinor)) spent"
+                     : mode == .remaining ? "\(fmt(max(0, limitMinor - spentMinor))) left of \(fmt(limitMinor)) · \(pctLabel)"
+                     : "\(fmt(spentMinor)) of \(fmt(limitMinor)) · \(pctLabel)")
                     .font(.caption2)
                     .foregroundColor(Color.secondaryText)
             }
@@ -2511,7 +2600,7 @@ struct UsageView: View {
                     Text("Reading Claude sessions from Chrome…").font(.caption)
                 }
             } else {
-                Text(usageManager.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                Text(usageManager.settingsChromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
                     .font(.caption)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2521,19 +2610,48 @@ struct UsageView: View {
                 .foregroundColor(Color.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
             chromeButtons
-            ForEach(usageManager.chromeProfiles) { profile in
-                Button("Use \(profile.name) (\(profile.id))") {
-                    usageManager.detectChromeSession(interactive: true, profileID: profile.id)
-                }
-                .disabled(usageManager.isDetectingChrome)
-                .font(.caption)
+            chromeProfileChoices
+        }
+    }
+
+    private var chromeProfileChoices: some View {
+        ForEach(usageManager.chromeProfiles) { profile in
+            Button("Use \(profile.name) (\(profile.id))") {
+                usageManager.detectChromeSession(interactive: true, profileID: profile.id)
             }
+            .disabled(usageManager.isDetectingChrome)
+            .font(.caption)
+        }
+    }
+
+    // Usage works: show the connection, not a background Chrome sync failure.
+    // Re-detecting stays available; a failure the user starts is shown.
+    private func connectedClaudeAccount(_ summary: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.green)
+                Text(summary)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let message = usageManager.settingsChromeMessage {
+                WarningNote(text: message)
+            }
+            Button(usageManager.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
+                usageManager.detectChromeSession(interactive: true, chooseProfile: true)
+            }
+            .disabled(usageManager.isDetectingChrome)
+            .secondaryButton()
+            .controlSize(.small)
+            chromeProfileChoices
         }
     }
 
     // Anthropic service status (compact; expandable on issue)
     private var serviceStatus: some View {
-        let effective = statusManager.effectiveIndicator
+        let effective = statusManager.effectiveIndicator(now: Date())
         let filteredIncidents = statusManager.filteredIncidents
         let filteredAffected = statusManager.filteredAffectedComponents
         let hasIssue = effective != "none"
@@ -2684,8 +2802,9 @@ struct UsageView: View {
                     get: { menuBarPreferences.percentageMode == .remaining },
                     set: { menuBarPreferences.setPercentageMode($0 ? .remaining : .used) }
                 ))
-                menuBarSelector(provider: .claude, options: usageManager.menuBarOptions)
-                menuBarSelector(provider: .codex, options: codexManager.snapshot?.menuBarOptions ?? [])
+                // Same options the status item uses, so the picker matches the menu bar.
+                menuBarSelector(provider: .claude, options: usageManager.menuBarDisplayOptions)
+                menuBarSelector(provider: .codex, options: codexManager.menuBarDisplayOptions)
             }
 
             settingsCard("General") {
@@ -2779,31 +2898,24 @@ struct UsageView: View {
         }
     }
 
+    // Lists real windows and shows the one the menu bar uses. A saved window that
+    // is temporarily missing stays saved; the picker shows the fallback in use.
+    @ViewBuilder
     private func menuBarSelector(provider: MenuBarProvider, options: [MenuBarWindowOption]) -> some View {
-        let valid = options.filter { $0.percent.isFinite && (0...100).contains($0.percent) }
-        let selectedID = menuBarPreferences.selectionID(for: provider)
-        let unavailable = selectedID != MenuBarSelection.automaticID && !valid.contains { $0.id == selectedID }
-        return VStack(alignment: .leading, spacing: 4) {
+        let valid = MenuBarSelection.pickerOptions(provider: provider, options: options)
+        let shown = MenuBarSelection.pickerSelectionID(provider: provider, options: valid,
+            selectionID: menuBarPreferences.selectionID(for: provider))
+        if let shown = shown {
             Picker(provider == .claude ? "Claude" : "Codex", selection: Binding(
-                get: { menuBarPreferences.selectionID(for: provider) },
+                get: { shown },
                 set: { menuBarPreferences.select($0, for: provider) }
             )) {
-                Text("Automatic (session preferred)").tag(MenuBarSelection.automaticID)
                 ForEach(valid) { option in
                     Text(option.label).tag(option.id)
-                }
-                if unavailable {
-                    Text("Saved window unavailable").tag(selectedID)
                 }
             }
             .pickerStyle(.menu)
             .font(.caption)
-            if unavailable {
-                Text("Using Automatic until your saved window returns.")
-                    .font(.caption2)
-                    .foregroundColor(Color.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -2841,7 +2953,11 @@ struct UsageView: View {
 
     private var chromeSession: some View {
         VStack(alignment: .leading, spacing: 10) {
-            chromeConnectionControls
+            if let summary = usageManager.connectionSummary {
+                connectedClaudeAccount(summary)
+            } else {
+                chromeConnectionControls
+            }
 
             HStack {
                 if let checked = usageManager.lastChromeCheck {
@@ -2956,7 +3072,7 @@ struct UsageView: View {
         let extra = tracked.count > 4 ? " +\(tracked.count - 4)" : ""
         let trackedSummary = tracked.isEmpty ? "No services tracked" : "Tracks \(trackedNames)\(extra)"
 
-        if sm.effectiveIndicator == "none" {
+        if sm.effectiveIndicator(now: Date()) == "none" {
             if let lastCheck = sm.lastUpdated {
                 return "\(trackedSummary) · checked \(relativeTime(lastCheck))"
             }

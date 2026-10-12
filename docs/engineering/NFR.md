@@ -13,14 +13,19 @@ Read with the active plan before engineering changes.
   until reset; Chrome rechecks hourly. Retries are bounded by timers.
 - Codex uses its installed app-server and own sign-in. Only read-only account and
   rate-limit RPCs; 20-second child deadline, forced cleanup, 1MiB output and 64 buckets.
-- LimitFuel retains com.claude.usagebar for settings migration.
+- Bundle ID is com.innolope.limitfuel. Before any setting is read, absent keys are
+  copied once from com.claude.usagebar (marker legacy_settings_migrated), never
+  overwriting and never deleting the legacy domain; a legacy open-at-login choice
+  registers the new identity's login item.
 - Popup native and SwiftUI viewport sizes agree, fit the status-item screen, and
   reopen at the top. Tall content stays scrollable; unavailable usage rows are omitted.
 - Menu bar shows one percentage per connected provider, with independent persisted
-  bucket/window selection in Settings and a session-first default. Missing selections
-  fall back without destroying the saved ID; current account data alone supplies usage.
-  A separate global Used/Remaining toggle defaults to Remaining and transforms only
-  the menu display; raw used values still drive meters, polling and notifications.
+  bucket/window selection in Settings and a session-first default. Settings pickers list
+  real windows only and show the one the menu bar uses; missing selections fall back
+  without destroying the saved ID; current account data alone supplies usage.
+  A separate global Used/Remaining toggle defaults to Remaining and applies to the menu
+  bar and popup meters with identical rounding; raw used values still drive warning
+  colors, polling and notifications.
 - Menu bar uses the app mark only while disconnected, and connected provider
   marks with percentages otherwise. Preserve0%, accessible labels and1x/2x templates.
 - Selected menu windows include centered reset text separated from the percentage
@@ -35,8 +40,14 @@ Read with the active plan before engineering changes.
   usage update, reaching1.2pt at30minutes. Logos/backgrounds stay sharp. Exact
   values and age remain accessible; Increase Contrast/Reduce Transparency disables
   blur. Redraw on existing timers/wake; no new permissions or network polls.
-- Chrome sync failure does not imply a disconnected Claude API session. Keep
-  sync controls in Settings while usage works; expose reconnect on actual auth failure.
+- Chrome sync failure does not imply a disconnected Claude API session. While usage
+  works, Settings shows the connection and hides background sync failures; Detect stays
+  available and shows failures the user started. Expose reconnect on actual auth failure.
+- Status alerts use only posts at most 6 hours old: an incident's latest update, or a
+  degraded component's last change when no fresh incident covers it. Expiry is silent.
+- Codex account/updated after account/read is confirmed with one more account/read
+  (same email keeps limits; new email re-reads them). Only a non-ChatGPT account is a
+  sign-out. Writes to an exited app-server fail with EPIPE, never SIGPIPE.
 - Claude optional weekly/model limits require valid current-response data. Missing
   or invalid values hide the row and clear prior values/resets; numeric0 remains valid.
   Overall Claude Weekly0 is hidden while session usage is positive; show both

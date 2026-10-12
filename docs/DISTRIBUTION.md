@@ -54,9 +54,9 @@ diff and tracked filenames before pushing; ignore rules do not untrack existing 
 
 App Store distribution requires an Apple Developer Program membership, an explicit
 App ID with a bundle identifier owned by your team, and a macOS app record in
-App Store Connect. LimitFuel currently retains upstream's `com.claude.usagebar` for
-local settings compatibility. Do not assume that identifier is available to Innolope;
-a Store variant needs an owned identifier and an explicit settings migration plan.
+App Store Connect. LimitFuel uses `com.innolope.limitfuel` and migrates settings
+from upstream's `com.claude.usagebar` once at launch; register that identifier for
+the Innolope team before creating a Store record.
 
 The current app is **not App Store ready**. Store macOS apps must be sandboxed and
 self-contained. Reading Chrome's cookie database/Keychain and executing an external

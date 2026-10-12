@@ -38,7 +38,7 @@ struct MenuPreferencesAcceptance {
         check(chosen([]) == nil, "account reset clears selected percentage")
         check(chosen([option("new", .codex, 2)]) == "new", "account B independent")
 
-        let suite = "MenuPreferencesAcceptance.\(UUID().uuidString)"
+        let suite = "LimitFuel.MenuPreferences.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let prefs = MenuBarPreferences(defaults: defaults)

@@ -32,7 +32,7 @@ option remains for other browsers.
 
 - 🟢 **Real-time usage tracking** - Monitor session (5-hour) and weekly (7-day) limits
 - 🎨 **Compact menu bar display** - Claude and OpenAI marks with one percentage and reset countdown per connected provider; the app mark appears when neither is connected
-- 🔄 **Used or remaining** - Remaining is the menu bar default; switch to Used and choose each provider's limit independently in Settings
+- 🔄 **Used or remaining** - Remaining is the default for the menu bar and the popup meters; switch to Used and choose each provider's limit independently in Settings
 - 🔔 **Smart notifications** - Alerts at 25%, 50%, 75%, 90% usage thresholds
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
@@ -59,8 +59,9 @@ option remains for other browsers.
 Claude mark 82% · 4h   OpenAI mark 85% · 6d
 ```
 
-The percentages show remaining capacity by default. In Settings → Menu bar
-usage, turn off **Show remaining percentage** to show used capacity. Reset time
+The percentages show remaining capacity by default, in the menu bar and the
+popup meters alike. In Settings → Menu bar usage, turn off **Show remaining
+percentage** to show used capacity. Warning colors still follow usage. Reset time
 follows a centered dot, for example `81% · 6d`, using days, hours, or minutes.
 Unknown reset times omit the countdown and separator. Tooltips identify the percentage meaning.
 Hours advance to the next number from minute 45 onward (`4h45m` → `5h`);
@@ -173,6 +174,7 @@ If you find this useful, consider:
 
 **Made with ❤️ for the Claude community**
 
-LimitFuel keeps the original bundle identifier for settings compatibility. Existing
-saved cookies and preferences carry over when upgrading from the original app.
-Quit the original app before opening LimitFuel; they share the same settings identity.
+LimitFuel uses its own bundle identifier, `com.innolope.limitfuel`. On first launch
+it copies saved cookies and preferences from the original app's `com.claude.usagebar`
+settings, once, and leaves them in place. Click Detect Chrome Session once afterwards
+to allow Keychain access for the new identity.
