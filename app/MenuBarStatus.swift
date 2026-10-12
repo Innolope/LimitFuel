@@ -43,8 +43,10 @@ enum MenuBarStatus {
               (-62_135_596_800...253_402_300_799).contains(current) else { return nil }
         let remaining = resetsAt.timeIntervalSince(now)
         if remaining <= 0 { return "0m" }
-        if remaining >= 86_400 { return "\(Int(remaining / 86_400))d" }
-        if remaining >= 3_600 { return "\(Int(remaining / 3_600))h" }
+        // Choose the unit before rounding: 23h50m stays 24h, not 1d.
+        if remaining >= 86_400 { return "\(Int((remaining + 43_200) / 86_400))d" }
+        // Advance the displayed hour at minute 45, inclusive.
+        if remaining >= 3_600 { return "\(Int((remaining + 900) / 3_600))h" }
         return "\(Int(ceil(remaining / 60)))m"
     }
 

@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-// Frozen spec-only acceptance suite. Seed 0xC0FFEE; 4,096 generated boundaries.
+// Frozen spec-only acceptance suite. Seed 0xC0FFEE; 4,096 generated boundaries plus 4,096 seeded rounding samples.
 // No production source or existing tests were read when authoring this file.
 private enum CountdownFailure: Error, CustomStringConvertible {
     case assertion(String)
@@ -24,8 +24,8 @@ struct MenuCountdownAcceptanceTests {
     }
     private static func reference(_ seconds: Double) -> String {
         if seconds <= 0 { return "0m" }
-        if seconds >= 86_400 { return "\(Int(floor(seconds / 86_400)))d" }
-        if seconds >= 3_600 { return "\(Int(floor(seconds / 3_600)))h" }
+        if seconds >= 86_400 { return "\(Int(floor(seconds / 86_400 + 0.5)))d" }
+        if seconds >= 3_600 { return "\(Int(floor(seconds / 3_600)) + (seconds.truncatingRemainder(dividingBy: 3_600) >= 2_700 ? 1 : 0))h" }
         return "\(Int(ceil(seconds / 60)))m"
     }
     private static func label(_ seconds: Double) -> String? {
@@ -46,11 +46,57 @@ struct MenuCountdownAcceptanceTests {
                                  86_400.001, 172_799.999, 172_800, 864_000] {
             try expect(label(seconds) == reference(seconds), "reset edge \(seconds): \(String(describing: label(seconds)))")
         }
+        // Literal expectations independently pin inclusive rounding and actual-duration units.
+        let explicit: [(Double, String)] = [
+            (3_540, "59m"), (3_599.999, "60m"), (3_600, "1h"),
+            (17_099, "4h"), (17_099.999, "4h"), (17_100, "5h"),
+            (17_100.001, "5h"), (17_940, "5h"), (85_800, "24h"),
+            (86_399.999, "24h"), (86_400, "1d"),
+            (129_599, "1d"), (129_599.999, "1d"), (129_600, "2d"),
+            (129_600.001, "2d")
+        ]
+        for (seconds, expected) in explicit {
+            try expect(label(seconds) == expected, "literal duration \(seconds) expects \(expected)")
+        }
+        for hours in 1..<24 {
+            for (offset, increment) in [(-0.001, 0), (0, 1), (0.001, 1)] {
+                let seconds = Double(hours) * 3_600 + 2_700 + offset
+                try expect(label(seconds) == "\(hours + increment)h", "hour \(hours) 45m boundary offset \(offset)")
+            }
+        }
+        for days in 1...100 {
+            for (offset, increment) in [(-0.001, 0), (0, 1), (0.001, 1)] {
+                let seconds = Double(days) * 86_400 + 43_200 + offset
+                try expect(label(seconds) == "\(days + increment)d", "day \(days) 12h boundary offset \(offset)")
+            }
+        }
+        let reset = now.addingTimeInterval(17_100)
+        for _ in 0..<5 {
+            try expect(MenuBarStatus.resetLabel(resetsAt: reset, now: now) == "5h", "fixed clock repeats deterministically")
+        }
+        for (advance, expected) in [(-0.001, "5h"), (0, "5h"), (0.001, "4h"), (17_100, "0m"), (17_101, "0m")] {
+            try expect(MenuBarStatus.resetLabel(resetsAt: reset, now: now.addingTimeInterval(advance)) == expected,
+                       "advancing clock \(advance) expects \(expected)")
+        }
+        let lower = Date(timeIntervalSince1970: -62_135_596_800)
+        let upper = Date(timeIntervalSince1970: 253_402_300_799)
+        for endpoint in [lower, upper] {
+            try expect(MenuBarStatus.resetLabel(resetsAt: endpoint, now: endpoint) == "0m", "inclusive supported endpoint")
+        }
+        try expect(MenuBarStatus.resetLabel(resetsAt: upper, now: lower) == reference(upper.timeIntervalSince(lower)), "full supported date span")
+        try expect(MenuBarStatus.resetLabel(resetsAt: lower, now: upper) == "0m", "supported extreme expired span")
+        for raw in [-62_135_596_800.001, 253_402_300_799.001] {
+            let unsupported = Date(timeIntervalSince1970: raw)
+            try expect(MenuBarStatus.resetLabel(resetsAt: unsupported, now: now) == nil, "reset outside inclusive date bounds")
+            try expect(MenuBarStatus.resetLabel(resetsAt: now, now: unsupported) == nil, "clock outside inclusive date bounds")
+        }
         try expect(MenuBarStatus.resetLabel(resetsAt: nil, now: now) == nil, "missing reset omits badge")
         for raw in [Double.nan, Double.infinity, -Double.infinity, 1e100] {
             let date = Date(timeIntervalSince1970: raw)
             try expect(MenuBarStatus.resetLabel(resetsAt: date, now: now) == nil,
                        "invalid/unsupported reset \(raw) omits badge")
+            try expect(MenuBarStatus.resetLabel(resetsAt: now, now: date) == nil,
+                       "invalid/unsupported clock \(raw) omits badge")
         }
         // LCG-generated values include fractional minute/hour/day edges and past resets.
         var seed: UInt64 = 0xC0FFEE
@@ -62,6 +108,13 @@ struct MenuCountdownAcceptanceTests {
             let seconds = boundary + offset
             try expect(label(seconds) == reference(seconds), "seed 0xC0FFEE index \(index), seconds \(seconds)")
         }
+        // Same recorded seed, continued stream: broad fractional durations across all units.
+        for index in 0..<4_096 {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            let seconds = Double(seed % 100_000_000) / 16 - 100
+            try expect(label(seconds) == reference(seconds), "seed 0xC0FFEE broad index \(index), seconds \(seconds)")
+        }
+
     }
     private static func selectionAndEntries() throws {
         let claudeReset = now.addingTimeInterval(4_000)
@@ -137,7 +190,7 @@ struct MenuCountdownAcceptanceTests {
             try countdownBoundaries()
             try selectionAndEntries()
             try nativeRendering()
-            print("PASS MenuCountdownAcceptanceTests: \(checks) checks; seed=0xC0FFEE; generated=4096")
+            print("PASS MenuCountdownAcceptanceTests: \(checks) checks; seed=0xC0FFEE; generated=8192")
         } catch {
             fputs("FAIL MenuCountdownAcceptanceTests: \(error)\n", stderr)
             exit(1)

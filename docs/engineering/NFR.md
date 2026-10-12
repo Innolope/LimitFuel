@@ -26,6 +26,8 @@ Read with the active plan before engineering changes.
 - Selected menu windows include centered reset text separated from the percentage
   by `·`, with one remaining-time unit: days, hours or rounded-up minutes. Unknown
   resets omit both countdown and separator. No countdown background is drawn.
+  Choose units from actual duration: minutes below one hour, hours below one day.
+  Advance hour numbers from minute 45 onward and day numbers from hour 12 onward.
 - Keep validated menu values in memory through transient fetch/parse failures.
   Auth failure, clear or changed identity removes them; valid responses replace
   all windows. Last-known values never trigger notifications.
