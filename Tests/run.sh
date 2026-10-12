@@ -1,20 +1,37 @@
 #!/bin/sh
 set -eu
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Test UserDefaults suites are named LimitFuel.<Kind>.<UUID>. removePersistentDomain
+# empties them, but each process still leaves an empty plist when it exits.
+list_test_defaults() {
+    ls "$HOME/Library/Preferences" 2>/dev/null | grep -E \
+        '^LimitFuel\.[A-Za-z]+(\.[A-Za-z]+)*\.[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}\.plist$' | sort || true
+}
 # Hooks return a short failure reason. Retain the exact failed-run transcript so
 # a hook-only failure can be diagnosed; the child retains the same set -eu checks.
 if [ "${1:-}" != "--inner" ]; then
+    # A late rewrite can outlive a run's cleanup; settled test suites are removed here.
+    find "$HOME/Library/Preferences" -maxdepth 1 -type f -mmin +2 -name 'LimitFuel.*.plist' 2>/dev/null \
+        | sed 's|.*/||' | grep -E '^LimitFuel\.[A-Za-z]+(\.[A-Za-z]+)*\.[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}\.plist$' \
+        | while IFS= read -r FILE; do rm -f "$HOME/Library/Preferences/$FILE"; done
     LOG=$(mktemp /private/tmp/limitfuel-checks.XXXXXX)
-    if "$REPO/Tests/run.sh" --inner >"$LOG" 2>&1; then
-        cat "$LOG"
+    BEFORE=$(mktemp /private/tmp/limitfuel-defaults.XXXXXX)
+    list_test_defaults > "$BEFORE"
+    if "$REPO/Tests/run.sh" --inner >"$LOG" 2>&1; then RESULT=0; else RESULT=$?; fi
+    # Every test process has exited. cfprefsd rewrites a domain's plist once, about
+    # two seconds after exit; wait it out, then remove only this run's suites.
+    sleep 4
+    list_test_defaults | comm -13 "$BEFORE" - | while IFS= read -r FILE; do
+        rm -f "$HOME/Library/Preferences/$FILE"
+    done
+    rm -f "$BEFORE"
+    cat "$LOG"
+    if [ "$RESULT" -eq 0 ]; then
         rm "$LOG"
         exit 0
-    else
-        RESULT=$?
-        cat "$LOG"
-        echo "Failed test transcript: $LOG" >&2
-        exit "$RESULT"
     fi
+    echo "Failed test transcript: $LOG" >&2
+    exit "$RESULT"
 fi
 BUILD=$(mktemp -d "/private/tmp/limitfuel-tests.XXXXXX")
 trap 'rm -rf "$BUILD"' EXIT HUP INT TERM
@@ -103,6 +120,13 @@ CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-weekly-rule-tests"
 
 compile_acceptance "DiagnosticsTests" "diagnostics-tests"
 "$BUILD/diagnostics-tests"
+
+# Status alert expiry, meter mode, pickers, Codex account race, Claude
+# connection state and legacy settings migration (spec-first, 2026-10-12).
+for SUITE in StatusExpiryTests MeterModeTests CodexAccountRaceTests ClaudeSettingsConnectionTests LegacySettingsMigrationTests; do
+    compile_acceptance "$SUITE" "$SUITE"
+    CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/$SUITE"
+done
 
 # Setup prepares the pinned SDK. Tests never download or send telemetry; missing
 # dependencies fail instead of silently skipping the privacy checks.

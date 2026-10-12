@@ -326,7 +326,7 @@ struct MenuRefreshStabilityTests {
         try expect(fixture.unexpectedCount == 0, "every Codex fetch used a declared local outcome")
     }
     static func main() {
-        let suite = "MenuRefreshStabilityTests.\(UUID().uuidString)"
+        let suite = "LimitFuel.MenuRefreshStability.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         for key in ["chrome_detection_enabled", "usage_notifications_enabled", "status_notifications_enabled"] {
             defaults.set(false, forKey: key)

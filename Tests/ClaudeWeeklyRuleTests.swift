@@ -27,7 +27,7 @@ struct WeeklyRuleTests {
         let scratch = URL(fileURLWithPath: base).appendingPathComponent("weekly-spec-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
-        let suite = "weekly-spec-\(UUID().uuidString)"
+        let suite = "LimitFuel.WeeklySpec.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "chrome_detection_enabled")

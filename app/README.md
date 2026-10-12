@@ -22,8 +22,9 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 **Menu Bar Display:**
 - Shows each connected provider's remaining capacity beside its monochrome mark
 - Example: `Claude mark 82% · 4h   OpenAI mark 85% · 6d`
-- Settings → Menu bar usage → **Show remaining percentage** switches between
-  remaining (on, the default) and used (off). Each provider keeps its selected limit.
+- Settings → Menu bar usage → **Show remaining percentage** switches the menu bar
+  and the popup meters between remaining (on, the default) and used (off). Each
+  provider's picker shows the limit the menu bar is using.
 - Plain reset text follows a centered dot, for example `81% · 6d`, using one unit:
   days, hours, or minutes. Unknown reset times omit the countdown and separator
   while preserving the percentage.
@@ -231,6 +232,7 @@ while a five-hour window is above 90%. At a known reset, or when usage drops to
 90% or below, polling returns to one minute. Status checks remain every minute
 and Chrome cookie import remains hourly. Smart alerts share the usage notification
 setting, with Codex deduplication scoped to its account, bucket and quota window.
+Service status alerts disappear once their latest post is more than six hours old.
 
 Installations upgraded with a saved cookie keep using it and skip automatic Chrome
 checks. Click Detect Chrome Session to switch to automatic hourly sync.

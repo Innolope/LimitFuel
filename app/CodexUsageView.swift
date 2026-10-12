@@ -1,9 +1,10 @@
 import SwiftUI
 import AppKit
 
-// Codex card on the dashboard: one ring per usage window.
+// Codex card on the dashboard: one meter per usage window.
 struct CodexUsageView: View {
     @ObservedObject var manager: CodexUsageManager
+    var mode: MenuBarPercentageMode = .used
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -49,20 +50,11 @@ struct CodexUsageView: View {
 
     private func meter(_ value: CodexWindow, fallback: String) -> some View {
         let mins = value.windowDurationMins
-        let fraction = value.usedPercent / 100
         return MeterRow(
             title: mins == 300 ? "Session" : mins == 10080 ? "Weekly" : fallback,
-            subtitle: mins == 300 ? "5h" : mins == 10080 ? "7d" : mins.map { durationLabel($0) },
-            percent: Int(value.usedPercent.rounded()),
-            fraction: fraction,
-            color: meterColor(fraction, base: Brand.codex),
+            subtitle: mins == 300 ? "5h" : mins == 10080 ? "7d" : mins.map { CodexSnapshot.durationLabel($0) },
+            used: value.usedPercent, mode: mode, base: Brand.codex,
             footnote: value.resetsAt.map { resetDescription($0) })
-    }
-
-    private func durationLabel(_ minutes: Int) -> String {
-        if minutes % 1440 == 0 { return "\(minutes / 1440)d" }
-        if minutes % 60 == 0 { return "\(minutes / 60)h" }
-        return "\(minutes)m"
     }
 }
 

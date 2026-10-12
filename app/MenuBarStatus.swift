@@ -27,8 +27,8 @@ enum MenuBarStatus {
          (.codex, codex, codexIsStale, codexUpdatedAt)].compactMap { provider, option, stale, updated in
             guard let option = option, option.provider == provider,
                   option.percent.isFinite, (0...100).contains(option.percent) else { return nil }
-            let displayedPercent = percentageMode == .remaining ? 100 - option.percent : option.percent
-            return MenuBarEntry(provider: provider, percent: Int(displayedPercent.rounded(.toNearestOrAwayFromZero)),
+            return MenuBarEntry(provider: provider,
+                                percent: (percentageMode ?? .used).displayedPercent(used: option.percent),
                                 resetsAt: option.resetsAt, isStale: stale, updatedAt: updated, percentageMode: percentageMode)
         }
     }

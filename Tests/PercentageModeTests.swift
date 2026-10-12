@@ -13,7 +13,7 @@ struct PercentageModeTests {
         MenuBarWindowOption(id: "test-window", provider: provider, label: "Test", percent: percent, durationMinutes: 300, isPreferredBucket: true, resetsAt: nil)
     }
     static func main() {
-        let name = "PercentageModeAcceptance.\(UUID().uuidString)"
+        let name = "LimitFuel.PercentageModeAcceptance.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         let key = "menubar_percentage_mode"
@@ -81,7 +81,7 @@ struct PercentageModeTests {
     }
     static func integration() {
         _ = NSApplication.shared
-        let name = "PercentageModeIntegration.\(UUID().uuidString)"
+        let name = "LimitFuel.PercentageModeIntegration.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defaults.set(false, forKey: "chrome_detection_enabled")
         defaults.set(false, forKey: "usage_notifications_enabled")

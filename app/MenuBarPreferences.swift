@@ -1,7 +1,27 @@
 import Foundation
 import Combine
 
-enum MenuBarPercentageMode: String { case used, remaining }
+enum MenuBarPercentageMode: String {
+    case used, remaining
+
+    // The menu bar and the popup meters share these, so both show one number.
+    func displayedPercent(used: Double) -> Int {
+        Int(displayedValue(used: used).rounded(.toNearestOrAwayFromZero))
+    }
+
+    func displayedFraction(used: Double) -> Double {
+        displayedValue(used: used) / 100
+    }
+
+    func accessibilityValue(used: Double) -> String {
+        "\(displayedPercent(used: used)) percent \(rawValue)"
+    }
+
+    private func displayedValue(used: Double) -> Double {
+        let clamped = used.isFinite ? max(0, min(100, used)) : 0
+        return self == .remaining ? 100 - clamped : clamped
+    }
+}
 
 struct MenuBarWindowOption: Identifiable, Equatable {
     let id: String
@@ -28,6 +48,17 @@ enum MenuBarSelection {
         }
         let candidates = sessions.isEmpty ? valid : sessions
         return candidates.first(where: { $0.isPreferredBucket }) ?? candidates.first
+    }
+
+    // Settings lists real windows only and shows the one the menu bar is using.
+    // Showing a fallback never rewrites a saved choice that is temporarily missing.
+    static func pickerOptions(provider: MenuBarProvider, options: [MenuBarWindowOption]) -> [MenuBarWindowOption] {
+        options.filter { $0.provider == provider && $0.percent.isFinite && (0...100).contains($0.percent) }
+    }
+
+    static func pickerSelectionID(provider: MenuBarProvider, options: [MenuBarWindowOption],
+                                  selectionID: String?) -> String? {
+        selectedOption(provider: provider, options: options, selectionID: selectionID)?.id
     }
 }
 

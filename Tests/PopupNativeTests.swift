@@ -218,11 +218,13 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         func pickerControls(_ view:NSView)->[NSPopUpButton] {
             (view as? NSPopUpButton).map{[$0]} ?? view.subviews.flatMap(pickerControls)
         }
-        let providerPickers = pickerControls(host.view).filter { $0.itemTitles.contains("Automatic (session preferred)") }
+        let claudeLabels = app.usageManager.menuBarDisplayOptions.map(\.label)
+        let codexLabels = app.codexManager.menuBarDisplayOptions.map(\.label)
+        let providerPickers = pickerControls(host.view).filter { $0.itemTitles == claudeLabels || $0.itemTitles == codexLabels }
         print("native-provider-pickers=\(providerPickers.map{$0.itemTitles})")
-        demand(providerPickers.count == 2,"Settings must contain two independent provider selectors")
-        let expectedCounts = [app.usageManager.menuBarOptions.count+1,app.codexManager.snapshot!.menuBarOptions.count+1].sorted()
-        demand(providerPickers.map{$0.numberOfItems}.sorted() == expectedCounts,"Native provider selectors omit or invent usage options")
+        demand(providerPickers.count == 2,"Settings must contain two independent provider selectors listing exactly their usage options")
+        demand(!pickerControls(host.view).contains { $0.itemTitles.contains { $0.hasPrefix("Automatic") } },"Settings must show real windows, not Automatic")
+        demand(Set(providerPickers.compactMap{$0.titleOfSelectedItem}) == ["Session · 5h","Codex bucket 0 · Session · 5h"],"Provider selectors must show the windows the menu bar uses")
         bottom()
         activateHeader("Back",x:28);state("dashboard",top:true);bottom()
         app.codexManager.snapshot = CodexSnapshot(accountLabel:"OFFLINE LAYOUT TEST",buckets:[CodexBucket(id:"secondary-only",name:"Secondary",primary:nil,secondary:CodexWindow(usedPercent:0,windowDurationMins:10080,resetsAt:nil))])
