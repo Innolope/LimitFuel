@@ -882,14 +882,9 @@ class UsageManager: ObservableObject {
                 case .failure(let error):
                     self.chromeNeedsAttention = true
                     self.chromeMessage = error.localizedDescription
-                    let code: DiagnosticErrorCode
-                    switch error as? ChromeCookieError {
-                    case .keychain: code = .signIn
-                    case .invalidCookie, .encryption: code = .invalidData
-                    case .unavailable, .profile: code = .unavailable
-                    default: code = .protocolFailure
+                    if let code = ChromeCookieError.diagnosticCode(for: error, interactive: interactive) {
+                        AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                     }
-                    AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                 case .success(let sessions):
                     self.chromeProfiles = sessions.map(\.profile)
                     guard sessions.count == 1, let session = sessions.first else {

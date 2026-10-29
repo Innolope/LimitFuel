@@ -49,6 +49,17 @@ enum ChromeCookieError: LocalizedError {
         case .profile: return "The selected Chrome profile is unavailable. Detect Chrome Session again to choose a profile."
         }
     }
+
+    /// Background rechecks cannot prompt, so a locked or denied Safe Storage key is expected
+    /// there and says nothing about the Claude connection, which keeps using the stored cookie.
+    static func diagnosticCode(for error: Error, interactive: Bool) -> DiagnosticErrorCode? {
+        switch error as? ChromeCookieError {
+        case .keychain: return interactive ? .signIn : nil
+        case .invalidCookie, .encryption: return .invalidData
+        case .unavailable, .profile: return .unavailable
+        default: return .protocolFailure
+        }
+    }
 }
 
 /// Reads only Claude's cookies. No shell commands, browser scripting or writes to Chrome.

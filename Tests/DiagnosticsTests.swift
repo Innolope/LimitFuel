@@ -79,6 +79,12 @@ private func awaitCount(_ events: Events, _ count: Int) {
         throwing.recordRecovery(provider: .claude)
         throwing.setEnabled(false)
         check(!throwing.enabled, "transport exception cannot break recovery or opt-out")
+        check(ChromeCookieError.diagnosticCode(for: ChromeCookieError.keychain, interactive: false) == nil,
+              "hourly background Keychain denial is not a Claude connection error")
+        check(ChromeCookieError.diagnosticCode(for: ChromeCookieError.keychain, interactive: true) == .signIn,
+              "explicit detection still reports Keychain denial")
+        check(ChromeCookieError.diagnosticCode(for: ChromeCookieError.encryption, interactive: false) == .invalidData,
+              "background detection keeps reporting other Chrome failures")
         print("Diagnostics acceptance passed")
     }
 }
