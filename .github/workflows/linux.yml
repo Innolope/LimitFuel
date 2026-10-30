@@ -1,0 +1,62 @@
+name: Linux checks
+on:
+  pull_request:
+    paths: ['linux/**', 'app/Diagnostics.plist', '.github/workflows/linux.yml']
+  push:
+    branches: [main]
+    paths: ['linux/**', 'app/Diagnostics.plist', '.github/workflows/linux.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    # The oldest supported runner, so the AppImage runs on older glibc too.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            build-essential file xvfb dbus-x11 python3
+      - name: Rust 1.93.0
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component clippy
+          rustup default 1.93.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: linux
+      - name: Core tests
+        run: cargo test -p limitfuel-core --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Bundle AppImage, deb and rpm
+        working-directory: linux/app
+        run: npx --yes @tauri-apps/cli@2.12.3 build --bundles appimage,deb,rpm
+      - name: Smoke test
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "$(./target/release/limitfuel --version)" = "LimitFuel $version"
+          test "$(APPIMAGE_EXTRACT_AND_RUN=1 ./target/release/bundle/appimage/*.AppImage --version)" = "LimitFuel $version"
+          # No tray host here: the status window must open and the app keep running.
+          set +e
+          dbus-run-session -- xvfb-run -a timeout 20 ./target/release/limitfuel
+          status=$?
+          set -e
+          test "$status" -eq 124
+      - uses: actions/upload-artifact@v4
+        with:
+          name: limitfuel-linux
+          path: |
+            linux/target/release/bundle/appimage/*.AppImage
+            linux/target/release/bundle/deb/*.deb
+            linux/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
