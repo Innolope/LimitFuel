@@ -16,7 +16,20 @@ The configured endpoint must use HTTPS and the official Sentry ingestion host.
 ## Payload and limits
 
 Application failures enter through enums only: Claude or Codex, and unavailable,
-signIn, protocolFailure, timeout, or invalidData. Each provider/error pair is
+signIn, protocolFailure, timeout, or invalidData. Only possible defects are sent:
+
+- `signIn` and `unavailable` are never sent. They are account or setup states the
+  app already shows, such as a signed-out provider, a missing Codex install or a
+  Chrome Keychain grant the background recheck may not prompt for.
+- `invalidData` is sent on first occurrence: a response arrived but its shape is
+  not one the app understands.
+- `timeout` and `protocolFailure` are sent only for a lasting outage: at least 10
+  failures in a row spanning at least an hour with no successful poll between
+  them. Failures while the Mac has no network route neither count nor break the
+  run, so sleep, wake, offline use and one-off server or Codex start-up delays
+  never report.
+
+Each provider/error pair is
 deduplicated until that provider recovers. A process-wide rolling window permits
 20 application report attempts per hour; turning reporting off/on and provider
 recovery do not reset this budget. The budget resets when the process exits.

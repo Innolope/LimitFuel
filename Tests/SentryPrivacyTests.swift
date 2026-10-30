@@ -166,9 +166,9 @@ private final class EnvelopeProtocol: URLProtocol {
             if event.provider == .claude { first.signal(); _ = release.wait(timeout: .now() + 2) }
             else { wrong.signal() }
         })
-        policy.recordFailure(provider: .claude, code: .timeout)
+        policy.recordFailure(provider: .claude, code: .invalidData)
         check(first.wait(timeout: .now() + 2) == .success, "first upload stalled")
-        policy.recordFailure(provider: .codex, code: .timeout)
+        policy.recordFailure(provider: .codex, code: .invalidData)
         policy.setEnabled(false)
         policy.setEnabled(true)
         release.signal()

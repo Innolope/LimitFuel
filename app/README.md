@@ -225,7 +225,7 @@ Only initialization, account/read and account/rateLimits/read RPCs are issued.
 No threads, inference, credit purchases/resets or email actions are started.
 Codex owns its authentication and renewal; the app never stores its tokens.
 Missing sign-in, unavailable executable or invalid/failed checks show an error
-and clear stale Codex data. CLI subprocesses have a 20-second timeout.
+and clear stale Codex data. CLI subprocesses have a 45-second timeout.
 
 Both providers poll independently every minute, increasing to 12 seconds only
 while a five-hour window is above 90%. At a known reset, or when usage drops to

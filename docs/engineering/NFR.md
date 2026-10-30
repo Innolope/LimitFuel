@@ -12,7 +12,10 @@ Read with the active plan before engineering changes.
 - Usage polls every minute, or every 12 seconds for five-hour windows above 90%
   until reset; Chrome rechecks hourly. Retries are bounded by timers.
 - Codex uses its installed app-server and own sign-in. Only read-only account and
-  rate-limit RPCs; 20-second child deadline, forced cleanup, 1MiB output and 64 buckets.
+  rate-limit RPCs; 45-second child deadline, forced cleanup, 1MiB output and 64 buckets.
+  Its start-up refreshes models online and can take about 20 seconds on a busy Mac.
+- One copy owns the menu bar. A later process with the same bundle ID, by kernel
+  start time, exits before AppKit starts; `--version` prints the version and exits.
 - Bundle ID is com.innolope.limitfuel. Before any setting is read, absent keys are
   copied once from com.claude.usagebar (marker legacy_settings_migrated), never
   overwriting and never deleting the legacy domain; a legacy open-at-login choice
