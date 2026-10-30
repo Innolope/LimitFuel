@@ -36,7 +36,9 @@ pub fn refresh(shared: SharedState<'_>) {
 #[tauri::command]
 pub async fn detect_browsers(app: AppHandle, shared: SharedState<'_>) -> Result<Value, String> {
     let shared = shared.inner().clone();
+    let worker = shared.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let shared = worker;
         let Some(config) = dirs::config_dir() else { return json!({"found": 0, "errors": ["No config directory."]}) };
         let mut found = Vec::new();
         let mut errors = Vec::new();

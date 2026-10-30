@@ -112,10 +112,10 @@ pub fn refresh(app: &AppHandle, shared: &Shared) {
         if label_changed {
             let _ = tray.set_title(Some(&label));
         }
-        if lines_changed {
-            if let Ok(menu) = build_menu(&handle, &lines) {
-                let _ = tray.set_menu(Some(menu));
-            }
+        if lines_changed
+            && let Ok(menu) = build_menu(&handle, &lines)
+        {
+            let _ = tray.set_menu(Some(menu));
         }
     });
 }

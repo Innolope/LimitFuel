@@ -89,6 +89,7 @@ mod imp {
 
     impl KeyProvider for BrowserKeys {
         fn password(&self, _allow_interaction: bool) -> Result<Vec<u8>, CookieError> {
+            let _ = self.application; // Only the Linux keyring looks this up.
             Err(CookieError::Keyring)
         }
     }

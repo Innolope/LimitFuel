@@ -61,19 +61,15 @@ pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::SeqCst);
     let mut guard = GUARD.lock().unwrap_or_else(|e| e.into_inner());
     if enabled && guard.is_none() && is_configured() {
-        *guard = Some(sentry::init((
-            DSN,
-            sentry::ClientOptions {
-                release: Some(Cow::Owned(format!("limitfuel-linux@{}", env!("CARGO_PKG_VERSION")))),
-                environment: Some("production".into()),
-                server_name: None,
-                send_default_pii: false,
-                attach_stacktrace: false,
-                max_breadcrumbs: 0,
-                before_send: Some(Arc::new(scrub)),
-                ..Default::default()
-            },
-        )));
+        let mut options = sentry::ClientOptions::default();
+        options.release = Some(Cow::Owned(format!("limitfuel-linux@{}", env!("CARGO_PKG_VERSION"))));
+        options.environment = Some("production".into());
+        options.server_name = None;
+        options.send_default_pii = false;
+        options.attach_stacktrace = false;
+        options.max_breadcrumbs = 0;
+        options.before_send = Some(Arc::new(scrub));
+        *guard = Some(sentry::init((DSN, options)));
     }
 }
 
