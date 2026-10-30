@@ -174,6 +174,9 @@ private func snapshot(_ used: Double, account: String = "fixture@example.test", 
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
             return url
         }
+        check(CodexClient(executable: root).timeout == CodexClient.defaultTimeout
+              && CodexClient.defaultTimeout >= 40 && CodexClient.defaultTimeout < RefreshSchedule.usageInterval,
+              "default budget covers a slow app-server cold start and ends before the next poll")
         let success = try CodexClient(executable: executable("success"), timeout: 20).fetch()
         check(success.accountLabel?.contains("fixture@example.test") == true && success.buckets.count == 1, "RPC order/auth/notification and result")
         for mode in ["eof", "rpc-error", "api-key", "no-login", "hang"] {

@@ -732,11 +732,63 @@ enum LegacySettings {
     }
 }
 
+// Checks that run before AppKit starts, so a second process never adds menu bar items.
+enum LaunchGate {
+    struct Instance: Equatable {
+        let pid: pid_t
+        let started: Date
+    }
+
+    /// `LimitFuel --version` prints and exits; without this it started a full second copy.
+    static func versionLine(arguments: [String], info: [String: Any]?) -> String? {
+        guard arguments.dropFirst().contains("--version") else { return nil }
+        let version = info?["CFBundleShortVersionString"] as? String ?? "development"
+        guard let build = info?["CFBundleVersion"] as? String, !build.isEmpty else { return "LimitFuel \(version)" }
+        return "LimitFuel \(version) (\(build))"
+    }
+
+    /// The earliest-started copy keeps the menu bar. PIDs wrap, so they only break exact ties.
+    static func shouldYield(_ current: Instance, to others: [Instance]) -> Bool {
+        others.contains { other in
+            guard other.pid != current.pid else { return false }
+            return other.started < current.started
+                || (other.started == current.started && other.pid < current.pid)
+        }
+    }
+
+    /// Kernel start time; LaunchServices has no launch date for a binary run from a shell.
+    static func startDate(of pid: pid_t) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&name, u_int(name.count), &info, &size, nil, 0) == 0,
+              size == MemoryLayout<kinfo_proc>.stride else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }
+
+    static func otherInstanceIsRunning(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier, let started = startDate(of: getpid()) else { return false }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { !$0.isTerminated }
+            .compactMap { app in startDate(of: app.processIdentifier).map { Instance(pid: app.processIdentifier, started: $0) } }
+        return shouldYield(Instance(pid: getpid(), started: started), to: others)
+    }
+}
+
 // Main entry point
 #if !ACCEPTANCE_TESTS
 @main
 struct Main {
     static func main() {
+        if let line = LaunchGate.versionLine(arguments: CommandLine.arguments, info: Bundle.main.infoDictionary) {
+            print(line)
+            exit(0)
+        }
+        if LaunchGate.otherInstanceIsRunning(bundleIdentifier: Bundle.main.bundleIdentifier) {
+            NSLog("LimitFuel is already running; this copy exits so the menu bar shows one set of items")
+            exit(0)
+        }
         let defaults = UserDefaults.standard
         let registersLoginItem = LegacySettings.migrate(into: defaults,
             legacy: defaults.persistentDomain(forName: LegacySettings.domain))
@@ -882,14 +934,9 @@ class UsageManager: ObservableObject {
                 case .failure(let error):
                     self.chromeNeedsAttention = true
                     self.chromeMessage = error.localizedDescription
-                    let code: DiagnosticErrorCode
-                    switch error as? ChromeCookieError {
-                    case .keychain: code = .signIn
-                    case .invalidCookie, .encryption: code = .invalidData
-                    case .unavailable, .profile: code = .unavailable
-                    default: code = .protocolFailure
+                    if let code = ChromeCookieError.diagnosticCode(for: error, interactive: interactive) {
+                        AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                     }
-                    AppDiagnostics.shared.recordFailure(provider: .claude, code: code)
                 case .success(let sessions):
                     self.chromeProfiles = sessions.map(\.profile)
                     guard sessions.count == 1, let session = sessions.first else {

@@ -90,7 +90,12 @@ struct CodexClient {
     let executable: URL
     let timeout: TimeInterval
 
-    init(executable: URL, timeout: TimeInterval = 20) {
+    /// Each refresh cold-starts `codex app-server`, which syncs models and plugins
+    /// before it answers `initialize`; under load that alone can take 15 s. Stays
+    /// below the 60 s poll so a slow fetch never collides with the next one.
+    static let defaultTimeout: TimeInterval = 45
+
+    init(executable: URL, timeout: TimeInterval = CodexClient.defaultTimeout) {
         self.executable = executable
         self.timeout = timeout
     }
