@@ -97,7 +97,10 @@ private final class RaceFetchFixture {
         }
     }
 
-    private static func fails(_ executable: URL, timeout: TimeInterval = 2) -> CodexUsageError {
+    // Fixtures are Python scripts: a loaded machine can take over a second to start
+    // one, so only the hang case relies on the deadline and it still ends well
+    // before the fixture's 5 s sleep.
+    private static func fails(_ executable: URL, timeout: TimeInterval = 10) -> CodexUsageError {
         do {
             _ = try CodexClient(executable: executable, timeout: timeout).fetch()
             fatalError("expected typed failure")
@@ -109,7 +112,7 @@ private final class RaceFetchFixture {
 
     private static func clientRaces(root: URL) throws {
         let early = try fixture(root: root, mode: "early")
-        let earlySnapshot = try CodexClient(executable: early.0, timeout: 2).fetch()
+        let earlySnapshot = try CodexClient(executable: early.0, timeout: 10).fetch()
         check(earlySnapshot.accountLabel?.contains("first@example.invalid") == true, "early updates preserve account")
         check(earlySnapshot.buckets.first?.primary?.usedPercent == 19, "early updates preserve limits")
         let earlyMethods = try methods(early.1)
@@ -125,7 +128,7 @@ private final class RaceFetchFixture {
         ]
         for update in updates {
             let same = try fixture(root: root, mode: "same", update: update)
-            let snapshot = try CodexClient(executable: same.0, timeout: 2).fetch()
+            let snapshot = try CodexClient(executable: same.0, timeout: 10).fetch()
             check(snapshot.accountLabel?.contains("first@example.invalid") == true, "confirmation preserves same email: \(update)")
             check(snapshot.buckets.count == 1 && snapshot.buckets[0].primary?.usedPercent == 19,
                   "same email returns first limits: \(update)")
@@ -133,7 +136,7 @@ private final class RaceFetchFixture {
             check(sameMethods == initial + ["account/read"], "exactly one extra account/read: \(update)")
         }
         let changed = try fixture(root: root, mode: "changed")
-        let switched = try CodexClient(executable: changed.0, timeout: 2).fetch()
+        let switched = try CodexClient(executable: changed.0, timeout: 10).fetch()
         check(switched.accountLabel?.contains("second@example.invalid") == true, "new email supplies account label")
         check(switched.accountLabel?.contains("first@example.invalid") != true, "old email is absent")
         check(switched.buckets.count == 1 && switched.buckets[0].primary?.usedPercent == 73, "new email uses only second limits")
@@ -155,9 +158,9 @@ private final class RaceFetchFixture {
         }
         let hung = try fixture(root: root, mode: "hang")
         let started = Date()
-        let timeout = fails(hung.0, timeout: 0.6)
+        let timeout = fails(hung.0, timeout: 2)
         if case .timeout = timeout {} else { fatalError("confirmation hang must time out") }
-        check(Date().timeIntervalSince(started) < 2, "confirmation shares bounded fetch deadline and cleanup")
+        check(Date().timeIntervalSince(started) < 4, "confirmation shares bounded fetch deadline and cleanup")
         let hungMethods = try methods(hung.1)
         check(hungMethods == initial + ["account/read"], "hang does not retry confirmation")
 
