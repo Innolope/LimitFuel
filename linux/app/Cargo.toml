@@ -1,6 +1,6 @@
 [package]
 name = "limitfuel"
-description = "Claude and Codex usage in the Linux tray"
+description = "Claude and Codex usage in the Linux and Windows tray"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,3 +23,16 @@ tauri-plugin-single-instance = "2.5.4"
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "5.2.0", features = ["rt-tokio-crypto-rust"] }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio", "blocking-api"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Registry",
+] }

@@ -1,9 +1,11 @@
-//! Preferences in `$XDG_CONFIG_HOME/limitfuel/settings.json`. No secrets: a pasted
-//! cookie lives in the Secret Service and a browser cookie is re-read when needed.
+//! Preferences in `$XDG_CONFIG_HOME/limitfuel/settings.json` (Windows:
+//! `%APPDATA%\limitfuel\settings.json`). No secrets: a pasted cookie lives in the
+//! Secret Service or Credential Manager, and a browser cookie is re-read when needed.
 
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::PathBuf;
 
@@ -64,9 +66,19 @@ impl Settings {
     /// Written to a private temporary file and renamed, so a crash never leaves half a file.
     pub fn save(&self) -> std::io::Result<()> {
         let dir = directory().ok_or_else(|| std::io::Error::other("no config directory"))?;
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+        let mut directory = fs::DirBuilder::new();
+        directory.recursive(true);
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        // %APPDATA% is already private to the user on Windows.
+        #[cfg(unix)]
+        {
+            directory.mode(0o700);
+            options.mode(0o600);
+        }
+        directory.create(&dir)?;
         let temporary = dir.join("settings.json.tmp");
-        let mut file = OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&temporary)?;
+        let mut file = options.open(&temporary)?;
         file.write_all(&serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?)?;
         file.sync_all()?;
         fs::rename(temporary, dir.join("settings.json"))

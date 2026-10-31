@@ -135,12 +135,58 @@ pub fn duration_label(minutes: i64) -> String {
 /// Windows keeps 128 UTF-16 units of tooltip, including the terminator.
 pub const TOOLTIP_LIMIT: usize = 127;
 
+const ROLES: [&str; 4] = ["Session", "Weekly", "Primary", "Secondary"];
+
+/// "Session · 5h" → "5h", "Sonnet · 7d" → "Sonnet 7d": the tooltip has little room.
 pub fn short_label(label: &str) -> String {
-    let _ = label;
-    unimplemented!()
+    let parts: Vec<&str> = label.split(" · ").collect();
+    let kept: Vec<&str> = parts.iter().copied().filter(|part| !ROLES.contains(part)).collect();
+    if kept.is_empty() { parts.join(" ") } else { kept.join(" ") }
 }
 
+/// Every limit on Windows, where the icon has no text label: one line per provider.
 pub fn tray_tooltip(claude: &[WindowOption], codex: &[WindowOption], mode: PercentageMode, now: f64) -> String {
-    let _ = (claude, codex, mode, now);
-    unimplemented!()
+    let build = |with_resets: bool| -> String {
+        let lines: Vec<String> = [(Provider::Claude, claude), (Provider::Codex, codex)]
+            .into_iter()
+            .filter_map(|(provider, options)| {
+                let entries: Vec<String> = options
+                    .iter()
+                    .filter(|o| o.is_valid())
+                    .map(|o| {
+                        let mut entry = format!("{} {}%", short_label(&o.label), mode.displayed_percent(o.percent));
+                        if with_resets && let Some(reset) = reset_label(o.resets_at, now) {
+                            entry.push_str(" · ");
+                            entry.push_str(&reset);
+                        }
+                        entry
+                    })
+                    .collect();
+                (!entries.is_empty()).then(|| format!("{} {}", provider.name(), entries.join(", ")))
+            })
+            .collect();
+        if lines.is_empty() { "LimitFuel".into() } else { lines.join("\n") }
+    };
+    let units = |text: &str| text.encode_utf16().count();
+    let full = build(true);
+    if units(&full) <= TOOLTIP_LIMIT {
+        return full;
+    }
+    let compact = build(false);
+    if units(&compact) <= TOOLTIP_LIMIT {
+        return compact;
+    }
+    // Whole characters only, so a surrogate pair is never split.
+    let mut prefix = String::new();
+    let mut used = 0;
+    for c in compact.chars() {
+        if used + c.len_utf16() > TOOLTIP_LIMIT - 1 {
+            break;
+        }
+        used += c.len_utf16();
+        prefix.push(c);
+    }
+    let mut cut = prefix.trim_end_matches([' ', ',', '\n']).to_string();
+    cut.push('…');
+    cut
 }

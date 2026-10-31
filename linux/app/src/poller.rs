@@ -32,8 +32,11 @@ fn load_initial_cookie(shared: &Shared) {
         match crate::secrets::load_cookie(false) {
             Some(cookie) if cookies::validate_header(&cookie) => *lock(&shared.cookie) = Some(cookie),
             _ => {
-                *lock(&shared.browser_message) =
-                    Some("Your saved cookie could not be read; the keyring may be locked. Paste it again in Settings.".into())
+                *lock(&shared.browser_message) = Some(if cfg!(windows) {
+                    "Your saved cookie could not be read from Windows Credential Manager. Paste it again in Settings.".into()
+                } else {
+                    "Your saved cookie could not be read; the keyring may be locked. Paste it again in Settings.".into()
+                })
             }
         }
     }
@@ -191,7 +194,7 @@ fn codex_loop(app: AppHandle, shared: Arc<Shared>) {
 }
 
 pub fn browser_root(name: &str) -> Option<cookies::Browser> {
-    cookies::browsers(&dirs::config_dir()?).into_iter().find(|b| b.name == name)
+    crate::secrets::browsers().into_iter().find(|b| b.name == name)
 }
 
 /// Re-reads the chosen browser profile hourly. Never prompts for the keyring.
@@ -203,8 +206,8 @@ fn cookie_loop(app: AppHandle, shared: Arc<Shared>) {
             let browser = settings.browser.as_deref().and_then(browser_root);
             let result = match (browser, settings.profile_id.as_deref()) {
                 (Some(browser), Some(profile)) => {
-                    let keys = BrowserKeys { application: browser.keyring_application };
-                    cookies::discover(&browser.root, Some(profile), false, now(), &keys)
+                    let keys = BrowserKeys::for_browser(&browser);
+                    cookies::discover_with(crate::secrets::SCHEME, &browser.root, Some(profile), false, now(), &keys)
                 }
                 _ => Err(CookieError::Profile),
             };

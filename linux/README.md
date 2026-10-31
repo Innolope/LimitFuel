@@ -1,9 +1,10 @@
-# LimitFuel for Linux
+# LimitFuel for Linux and Windows
 
-Claude and Codex plan usage in the Linux tray: the percentage and reset time of
-each limit, a menu with every window, and notifications at 25, 50, 75 and 90%.
+Claude and Codex plan usage in the Linux tray and the Windows notification area:
+the percentage and reset time of each limit, a menu with every window, and
+notifications at 25, 50, 75 and 90%.
 
-## Install
+## Install on Linux
 
 Each release has three packages for x86_64:
 
@@ -43,6 +44,34 @@ to get the icon.
 Not supported yet: KWallet (KDE users of Chrome can paste a cookie instead) and
 Firefox.
 
+## Windows (Beta)
+
+`LimitFuel-Setup-x64.exe` installs LimitFuel for the current user, without
+administrator rights, in `%LOCALAPPDATA%\LimitFuel`. It needs Windows 10 or 11
+(x64) and installs Microsoft Edge WebView2 if it is missing.
+
+The installer is not code-signed yet, so Microsoft Defender SmartScreen shows
+"Windows protected your PC" the first time. Choose **More info**, then **Run
+anyway**.
+
+The icon sits in the notification area. Hover over it to see every limit; click
+it for the menu.
+
+- **Claude:** paste your `Cookie` header in Settings. In Chrome or Edge, open
+  claude.ai, press F12, reload, select any request to claude.ai in the Network
+  tab and copy its `Cookie` request header. It is kept in Windows Credential
+  Manager, never in a file. Browser detection usually does not work on Windows:
+  Chrome 127 and later encrypt cookies so that only the browser itself can read
+  them (App-Bound Encryption), and browsers keep their cookie file locked while
+  they run. LimitFuel does not work around either.
+- **Codex:** install the Codex CLI (`npm install -g @openai/codex`) and run
+  `codex login` with ChatGPT. LimitFuel finds `codex.exe` or `codex.cmd` on your
+  `PATH` and in the usual npm, pnpm, Bun, Scoop and WinGet locations.
+
+Settings are in `%APPDATA%\limitfuel\settings.json`. Open at login uses the
+`LimitFuel` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`;
+uninstalling removes it.
+
 ## Privacy
 
 Settings are in `~/.config/limitfuel/settings.json` (mode 0600) and contain no
@@ -64,5 +93,11 @@ cd linux && cargo test -p limitfuel-core
 cd linux/app && npx --yes @tauri-apps/cli@2.12.3 build --bundles appimage,deb,rpm
 ```
 
-The core logic (`core/`) is plain Rust and its tests run on Linux and macOS.
+On Windows (with the Visual Studio C++ build tools and Rust installed):
+
+```bash
+cd linux/app && npx --yes @tauri-apps/cli@2.12.3 build --bundles nsis
+```
+
+The core logic (`core/`) is plain Rust and its tests run on Linux, macOS and Windows.
 [`SPEC.md`](SPEC.md) describes the behavior and what can go wrong.

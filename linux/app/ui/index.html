@@ -45,8 +45,9 @@
 
     <section class="card">
       <h2>Connect Claude</h2>
-      <p class="subtle">LimitFuel reads your claude.ai session from Chrome, Chromium or Brave. It only reads claude.ai cookies, and never writes to your browser.</p>
-      <div class="row">
+      <p class="subtle" data-platform="linux" hidden>LimitFuel reads your claude.ai session from Chrome, Chromium or Brave. It only reads claude.ai cookies, and never writes to your browser.</p>
+      <p class="subtle" data-platform="windows" hidden>On Windows, paste your claude.ai cookie. Chrome 127 and later encrypt cookies so that only the browser itself can read them (App-Bound Encryption), and browsers keep their cookie file locked while they run. LimitFuel doesn’t work around either, so browser detection usually finds nothing here.</p>
+      <div class="row" id="detect-row">
         <button type="button" class="primary" id="detect">Detect browser session</button>
         <button type="button" class="ghost danger" id="disconnect" hidden>Disconnect</button>
       </div>
@@ -56,8 +57,9 @@
       </div>
       <p class="message" id="connect-message" hidden></p>
       <details id="paste">
-        <summary>Paste a cookie instead</summary>
-        <p class="subtle">In your browser’s developer tools, copy the <code>Cookie</code> request header from any claude.ai request. It is kept in your keyring, not in a file.</p>
+        <summary id="paste-summary">Paste a cookie instead</summary>
+        <p class="subtle" data-platform="linux" hidden>In your browser’s developer tools, copy the <code>Cookie</code> request header from any claude.ai request. It is kept in your keyring, not in a file.</p>
+        <p class="subtle" data-platform="windows" hidden>In Chrome or Edge, open claude.ai and press F12. In the Network tab, reload the page, select any request to claude.ai and copy the value of its <code>Cookie</code> request header. LimitFuel keeps it in Windows Credential Manager, not in a file.</p>
         <textarea id="cookie" rows="3" spellcheck="false" autocomplete="off" placeholder="sessionKey=…; lastActiveOrg=…"></textarea>
         <div class="row"><button type="button" class="primary" id="save-cookie">Use this cookie</button></div>
       </details>
@@ -77,11 +79,12 @@
 
     <section class="card">
       <h2>Tray</h2>
-      <label class="field">
+      <p class="subtle" data-platform="windows" hidden>Hover over the tray icon to see every limit, or click it for the full list.</p>
+      <label class="field" data-platform="linux" hidden>
         <span>Claude window</span>
         <select id="claude-window"></select>
       </label>
-      <label class="field">
+      <label class="field" data-platform="linux" hidden>
         <span>Codex window</span>
         <select id="codex-window"></select>
       </label>

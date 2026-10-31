@@ -5,6 +5,26 @@ const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
 let state = null;
+let platformShown = false;
+
+// The window is shared by Linux and Windows; only the text and the order differ.
+function showPlatform() {
+  if (platformShown) return;
+  platformShown = true;
+  for (const element of document.querySelectorAll("[data-platform]")) {
+    element.hidden = element.dataset.platform !== state.platform;
+  }
+  if (state.platform !== "windows") return;
+  // Pasting is the main path on Windows; detection is a secondary try.
+  const paste = $("paste");
+  paste.open = true;
+  $("detect-row").before(paste);
+  $("paste-summary").textContent = "Paste your claude.ai cookie";
+  $("detect").textContent = "Try browser detection";
+  $("detect").classList.replace("primary", "ghost");
+}
+
+const isWindows = () => state?.platform === "windows";
 
 function relative(seconds) {
   if (seconds == null) return "";
@@ -27,7 +47,8 @@ function renderProvider(name, provider, connectedHint) {
   const suffix = state.settings.percentage_mode === "used" ? "used" : "left";
   for (const entry of provider.windows) {
     const meter = document.createElement("div");
-    meter.className = "meter" + (entry.selected ? " in-tray" : "");
+    // Windows has no tray label; its tooltip lists every window.
+    meter.className = "meter" + (entry.selected && !isWindows() ? " in-tray" : "");
     const head = document.createElement("div");
     head.className = "meter-head";
     const label = document.createElement("span");
@@ -80,6 +101,7 @@ function fillSelect(select, provider, selectedId) {
 
 function render() {
   if (!state) return;
+  showPlatform();
   $("version").textContent = `Version ${state.version}`;
   $("tray-warning").hidden = state.trayHost;
   renderProvider("claude", state.claude, state.connected ? "Connecting…" : "Not connected");
@@ -141,7 +163,9 @@ async function detectCodexPlaceholder() {
 
 $("refresh").addEventListener("click", (e) => run(e.currentTarget, () => invoke("refresh")));
 $("detect").addEventListener("click", (e) => run(e.currentTarget, async () => {
-  setMessage($("connect-message"), "Looking for a signed-in claude.ai session… Your keyring may ask to unlock.", true);
+  setMessage($("connect-message"), isWindows()
+    ? "Looking for a signed-in claude.ai session…"
+    : "Looking for a signed-in claude.ai session… Your keyring may ask to unlock.", true);
   const result = await invoke("detect_browsers");
   if (result.found === 1) setMessage($("connect-message"), "Connected.", true);
   else if (result.found > 1) setMessage($("connect-message"), "");
@@ -154,7 +178,8 @@ $("disconnect").addEventListener("click", (e) => run(e.currentTarget, async () =
 $("save-cookie").addEventListener("click", (e) => run(e.currentTarget, async () => {
   const result = await invoke("save_cookie", { header: $("cookie").value });
   $("cookie").value = "";
-  setMessage($("connect-message"), result.stored ? "Cookie saved to your keyring." : state?.browserMessage || "Cookie in use.", true);
+  const saved = isWindows() ? "Cookie saved to Windows Credential Manager." : "Cookie saved to your keyring.";
+  setMessage($("connect-message"), result.stored ? saved : state?.browserMessage || "Cookie in use.", true);
 }));
 $("save-codex").addEventListener("click", (e) => run(e.currentTarget, async () => {
   await invoke("set_codex_path", { path: $("codex-path").value });

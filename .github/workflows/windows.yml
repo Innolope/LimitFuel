@@ -1,0 +1,57 @@
+name: Windows checks
+on:
+  pull_request:
+    paths: ['linux/**', 'app/Diagnostics.plist', '.github/workflows/windows.yml']
+  push:
+    branches: [main]
+    paths: ['linux/**', 'app/Diagnostics.plist', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust 1.93.0
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component clippy
+          rustup default 1.93.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: linux
+      - name: Core tests
+        run: cargo test -p limitfuel-core --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Bundle NSIS installer
+        working-directory: linux/app
+        run: npx --yes @tauri-apps/cli@2.12.3 build --bundles nsis
+      - name: Smoke test
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "$(./target/release/limitfuel.exe --version)" = "LimitFuel $version"
+          installer=$(ls target/release/bundle/nsis/*-setup.exe)
+          # A per-user install needs no elevation and lands in %LOCALAPPDATA%.
+          "$installer" //S
+          installed="$LOCALAPPDATA/LimitFuel/limitfuel.exe"
+          test -f "$installed"
+          test "$("$installed" --version)" = "LimitFuel $version"
+          # The tray app must start, create its icon and keep running.
+          "$installed" &
+          sleep 20
+          tasklist //FI "IMAGENAME eq limitfuel.exe" //NH | grep -i limitfuel.exe
+          taskkill //F //IM limitfuel.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: limitfuel-windows
+          path: linux/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

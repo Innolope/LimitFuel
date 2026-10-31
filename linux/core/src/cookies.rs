@@ -1,7 +1,11 @@
-//! Reads only claude.ai's cookies from a Chromium-family browser profile on Linux.
-//! No browser scripting, no writes, no copies of the cookie database.
+//! Reads only claude.ai's cookies from a Chromium-family browser profile on Linux
+//! and Windows. No browser scripting, no writes, no copies of the cookie database,
+//! and no attempt to get around App-Bound Encryption on Windows.
 
 use aes::Aes128;
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
+use base64::Engine;
 use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
 use rusqlite::{Connection, OpenFlags, params};
 use serde_json::Value;
@@ -16,6 +20,7 @@ pub enum CookieError {
     Unavailable,
     Database,
     /// The Secret Service is locked, absent or refused; background reads never prompt.
+    /// On Windows: the browser's DPAPI-protected key could not be unlocked.
     Keyring,
     Encryption,
     InvalidCookie,
@@ -28,12 +33,14 @@ impl CookieError {
     pub fn message(self) -> &'static str {
         match self {
             CookieError::Unavailable => "Browser profiles are unavailable. Open Claude in your browser and sign in, then detect again.",
+            CookieError::Database if cfg!(windows) => "The browser keeps its cookie file locked while it runs. Close the browser completely and detect again, or paste a cookie.",
             CookieError::Database => "The browser's cookie storage could not be read completely. Quit the browser and detect again, or paste a cookie.",
+            CookieError::Keyring if cfg!(windows) => "Windows could not unlock this browser's cookie key. Detect while signed in to Windows as the browser's user, or paste a cookie.",
             CookieError::Keyring => "The keyring is locked or access was denied. Click Detect Browser Session to unlock it, or paste a cookie.",
             CookieError::Encryption => "Browser cookies use an unsupported or damaged encryption format. Sign in again, or paste a cookie.",
             CookieError::InvalidCookie => "The browser returned an invalid, ambiguous or oversized session cookie. Sign in again, or paste a cookie.",
             CookieError::Profile => "The selected browser profile is unavailable. Detect again to choose a profile.",
-            CookieError::AppBound => unimplemented!(),
+            CookieError::AppBound => "This browser encrypts its cookies so that only the browser itself can read them (App-Bound Encryption, Chrome 127 and later). Paste a cookie instead.",
         }
     }
 }
@@ -58,6 +65,7 @@ const MAX_ENCRYPTED: usize = 32_768;
 const MAX_PLAIN: usize = 16_384;
 const MAX_ROWS: usize = 128;
 const CHROME_EPOCH_OFFSET: f64 = 11_644_473_600.0;
+const MAX_LOCAL_STATE: usize = 4 * 1024 * 1024;
 
 pub fn derive_key(password: &[u8]) -> [u8; 16] {
     let mut key = [0u8; 16];
@@ -86,6 +94,12 @@ pub fn decrypt_value(
     let decryptor = cbc::Decryptor::<Aes128>::new(&key.into(), &[b' '; 16].into());
     let mut plain =
         decryptor.decrypt_padded_vec::<Pkcs7>(cipher).map_err(|_| CookieError::Encryption)?;
+    strip_host_hash(&mut plain, host, db_version)?;
+    String::from_utf8(plain).map_err(|_| CookieError::Encryption)
+}
+
+/// Since cookie database version 24 the plaintext starts with SHA-256(host).
+fn strip_host_hash(plain: &mut Vec<u8>, host: &str, db_version: i64) -> Result<(), CookieError> {
     if db_version >= 24 {
         let digest = Sha256::digest(host.as_bytes());
         if plain.len() < digest.len() || plain[..digest.len()] != digest[..] {
@@ -93,7 +107,7 @@ pub fn decrypt_value(
         }
         plain.drain(..digest.len());
     }
-    String::from_utf8(plain).map_err(|_| CookieError::Encryption)
+    Ok(())
 }
 
 const SEPARATORS: &[u8] = b"()<>@,;:\\\"/[]?={} ";
@@ -152,7 +166,7 @@ fn valid_profile_id(id: &str) -> bool {
 
 fn profile_names(root: &Path) -> BTreeMap<String, String> {
     let path = root.join("Local State");
-    let small = path.metadata().is_ok_and(|m| m.len() <= 4 * 1024 * 1024);
+    let small = path.metadata().is_ok_and(|m| m.len() <= MAX_LOCAL_STATE as u64);
     let json: Option<Value> =
         small.then(|| std::fs::read(&path).ok()).flatten().and_then(|data| serde_json::from_slice(&data).ok());
     json.as_ref()
@@ -169,11 +183,16 @@ fn profile_names(root: &Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// Which browser encryption to expect: Linux (`v10`/`v11`, AES-128-CBC) or
+/// Windows (`v10` with a DPAPI-protected AES-256-GCM key, `v20` App-Bound).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CookieScheme {
     Linux,
     Windows,
 }
+
+const GCM_NONCE: usize = 12;
+const GCM_TAG: usize = 16;
 
 pub fn decrypt_value_windows(
     encrypted: &[u8],
@@ -181,45 +200,104 @@ pub fn decrypt_value_windows(
     db_version: i64,
     key: &mut dyn FnMut() -> Result<Vec<u8>, CookieError>,
 ) -> Result<String, CookieError> {
-    let _ = (encrypted, host, db_version, key);
-    unimplemented!()
+    if encrypted.len() > MAX_ENCRYPTED {
+        return Err(CookieError::Encryption);
+    }
+    match encrypted.get(..3) {
+        // Decrypting this needs the browser's own elevated service. LimitFuel stops here.
+        Some(b"v20") => return Err(CookieError::AppBound),
+        Some(b"v10") if encrypted.len() >= 3 + GCM_NONCE + GCM_TAG => {}
+        _ => return Err(CookieError::Encryption),
+    }
+    let key = key()?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| CookieError::Encryption)?;
+    let (nonce, sealed) = encrypted[3..].split_at(GCM_NONCE);
+    let nonce = Nonce::try_from(nonce).map_err(|_| CookieError::Encryption)?;
+    let mut plain = cipher.decrypt(&nonce, sealed).map_err(|_| CookieError::Encryption)?;
+    strip_host_hash(&mut plain, host, db_version)?;
+    String::from_utf8(plain).map_err(|_| CookieError::Encryption)
 }
 
+/// The DPAPI blob that protects a Windows browser's cookie key, from `Local State`.
 pub fn local_state_key(local_state: &[u8]) -> Result<Vec<u8>, CookieError> {
-    let _ = local_state;
-    unimplemented!()
+    if local_state.len() > MAX_LOCAL_STATE {
+        return Err(CookieError::Keyring);
+    }
+    let json: Value = serde_json::from_slice(local_state).map_err(|_| CookieError::Keyring)?;
+    let encoded = json.pointer("/os_crypt/encrypted_key").and_then(Value::as_str).ok_or(CookieError::Keyring)?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| CookieError::Keyring)?;
+    match decoded.strip_prefix(b"DPAPI") {
+        Some(blob) if !blob.is_empty() => Ok(blob.to_vec()),
+        _ => Err(CookieError::Keyring),
+    }
 }
 
 pub fn windows_browsers(local_app_data: &Path) -> Vec<Browser> {
-    let _ = local_app_data;
-    unimplemented!()
+    let root = |parts: &[&str]| parts.iter().fold(local_app_data.to_path_buf(), |path, part| path.join(part));
+    vec![
+        Browser { name: "Google Chrome", root: root(&["Google", "Chrome", "User Data"]), keyring_application: "chrome" },
+        Browser { name: "Microsoft Edge", root: root(&["Microsoft", "Edge", "User Data"]), keyring_application: "edge" },
+        Browser {
+            name: "Brave",
+            root: root(&["BraveSoftware", "Brave-Browser", "User Data"]),
+            keyring_application: "brave",
+        },
+        Browser { name: "Chromium", root: root(&["Chromium", "User Data"]), keyring_application: "chromium" },
+    ]
 }
 
+#[cfg(windows)]
+fn dpapi(data: &[u8], protect: bool) -> Result<Vec<u8>, CookieError> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
+    };
+    let length = u32::try_from(data.len()).map_err(|_| CookieError::Keyring)?;
+    let input = CRYPT_INTEGER_BLOB { cbData: length, pbData: data.as_ptr().cast_mut() };
+    let mut output = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+    let flags = CRYPTPROTECT_UI_FORBIDDEN;
+    // SAFETY: both blobs are valid for the call; DPAPI only reads `input`. No entropy, no prompt.
+    let ok = unsafe {
+        use std::ptr::{null, null_mut};
+        if protect {
+            CryptProtectData(&input, null(), null(), null(), null(), flags, &mut output)
+        } else {
+            CryptUnprotectData(&input, null_mut(), null(), null(), null(), flags, &mut output)
+        }
+    };
+    if ok == 0 || output.pbData.is_null() {
+        return Err(CookieError::Keyring);
+    }
+    // SAFETY: DPAPI returned `cbData` bytes at `pbData`, freed with LocalFree.
+    let result = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
+    unsafe { LocalFree(output.pbData.cast()) };
+    if result.is_empty() { Err(CookieError::Keyring) } else { Ok(result) }
+}
+
+/// Protects `data` for the current Windows user (the inverse of `dpapi_unprotect`).
 #[cfg(windows)]
 pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, CookieError> {
-    let _ = data;
-    unimplemented!()
+    dpapi(data, true)
 }
 
+/// Never shows UI: a background read must not prompt.
 #[cfg(windows)]
 pub fn dpapi_unprotect(blob: &[u8]) -> Result<Vec<u8>, CookieError> {
-    let _ = blob;
-    unimplemented!()
+    dpapi(blob, false)
 }
 
-pub fn discover_with(
-    scheme: CookieScheme,
+pub fn discover(
     root: &Path,
     profile_id: Option<&str>,
     allow_interaction: bool,
     now: f64,
     keys: &dyn KeyProvider,
 ) -> Result<Vec<ChromeSession>, CookieError> {
-    let _ = (scheme, root, profile_id, allow_interaction, now, keys);
-    unimplemented!()
+    discover_with(CookieScheme::Linux, root, profile_id, allow_interaction, now, keys)
 }
 
-pub fn discover(
+pub fn discover_with(
+    scheme: CookieScheme,
     root: &Path,
     profile_id: Option<&str>,
     allow_interaction: bool,
@@ -278,7 +356,7 @@ pub fn discover(
         let mut fetch_password = || -> Result<Vec<u8>, CookieError> {
             password.get_or_insert_with(|| keys.password(allow_interaction)).clone()
         };
-        if let Some(cookie_header) = read(&canonical_database, now, &mut fetch_password)? {
+        if let Some(cookie_header) = read(scheme, &canonical_database, now, &mut fetch_password)? {
             let id = directory.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
             let name = names.get(&id).cloned().unwrap_or_else(|| id.clone());
             sessions.push(ChromeSession { profile: ChromeProfile { id, name }, cookie_header });
@@ -287,13 +365,31 @@ pub fn discover(
     Ok(sessions)
 }
 
+/// SQLite is given a plain `C:\\…` path rather than the `\\?\\C:\\…` form canonicalize returns.
+#[cfg(windows)]
+fn sqlite_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+#[cfg(not(windows))]
+fn sqlite_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 fn read(
+    scheme: CookieScheme,
     path: &Path,
     now: f64,
     password: &mut dyn FnMut() -> Result<Vec<u8>, CookieError>,
 ) -> Result<Option<String>, CookieError> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut connection = Connection::open_with_flags(path, flags).map_err(|_| CookieError::Database)?;
+    // On Windows a running browser holds this file exclusively: that is Database, not retried.
+    let mut connection =
+        Connection::open_with_flags(sqlite_path(path), flags).map_err(|_| CookieError::Database)?;
     connection.busy_timeout(Duration::from_millis(250)).map_err(|_| CookieError::Database)?;
     // One read transaction sees WAL commits consistently without copying the secret file.
     let transaction = connection.transaction().map_err(|_| CookieError::Database)?;
@@ -343,7 +439,7 @@ fn read(
         if count > MAX_ROWS || name.len() > 1024 || !valid_pair(&name, "") {
             return Err(CookieError::InvalidCookie);
         }
-        let value = cookie_value(row, &host, version, password);
+        let value = cookie_value(scheme, row, &host, version, password);
         let value = match value {
             Ok(value) if valid_pair(&name, &value) && (name != "sessionKey" || !value.is_empty()) => Ok(value),
             Ok(_) => Err(CookieError::InvalidCookie),
@@ -373,6 +469,7 @@ fn read(
 }
 
 fn cookie_value(
+    scheme: CookieScheme,
     row: &rusqlite::Row<'_>,
     host: &str,
     version: i64,
@@ -383,7 +480,10 @@ fn cookie_value(
         if encrypted.len() > MAX_ENCRYPTED {
             return Err(CookieError::InvalidCookie);
         }
-        return decrypt_value(&encrypted, host, version, password);
+        return match scheme {
+            CookieScheme::Linux => decrypt_value(&encrypted, host, version, password),
+            CookieScheme::Windows => decrypt_value_windows(&encrypted, host, version, password),
+        };
     }
     let plain: Option<String> = row.get(2).ok();
     match plain {
