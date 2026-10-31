@@ -8,7 +8,6 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -603,20 +602,35 @@ fn handle(mut stream: TcpStream, routes: &[(String, Route)], seen: &Mutex<Vec<Se
             let _ = stream.flush();
             thread::sleep(Duration::from_secs(5));
         }
-        Behavior::Reset => {
-            let linger = libc::linger { l_onoff: 1, l_linger: 0 };
-            unsafe {
-                libc::setsockopt(
-                    stream.as_raw_fd(),
-                    libc::SOL_SOCKET,
-                    libc::SO_LINGER,
-                    &linger as *const libc::linger as *const libc::c_void,
-                    std::mem::size_of::<libc::linger>() as libc::socklen_t,
-                );
-            }
-            drop(stream);
-        }
+        Behavior::Reset => reset(stream),
     }
+}
+
+/// Closes with RST instead of FIN: SO_LINGER on, with a zero timeout.
+#[cfg(unix)]
+fn reset(stream: TcpStream) {
+    use std::os::fd::AsRawFd;
+    let linger = libc::linger { l_onoff: 1, l_linger: 0 };
+    unsafe {
+        libc::setsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            &linger as *const libc::linger as *const libc::c_void,
+            std::mem::size_of::<libc::linger>() as libc::socklen_t,
+        );
+    }
+    drop(stream);
+}
+
+#[cfg(windows)]
+fn reset(stream: TcpStream) {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{LINGER, SO_LINGER, SOL_SOCKET, setsockopt};
+    let linger = LINGER { l_onoff: 1, l_linger: 0 };
+    let size = std::mem::size_of::<LINGER>() as i32;
+    unsafe { setsockopt(stream.as_raw_socket() as usize, SOL_SOCKET, SO_LINGER, (&raw const linger).cast(), size) };
+    drop(stream);
 }
 
 fn routes_ok(org: &str) -> Vec<(String, Route)> {
