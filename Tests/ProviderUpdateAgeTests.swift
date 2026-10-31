@@ -27,6 +27,7 @@ private final class AgeProtocol: URLProtocol {
     static var requestCount: Int { lock.lock(); defer { lock.unlock() }; return calls }
     static var unexpectedCount: Int { lock.lock(); defer { lock.unlock() }; return unexpected }
     static var completedRequestCount: Int { lock.lock(); defer { lock.unlock() }; return mainCompleted }
+    static var allRequestsStarted: Bool { lock.lock(); defer { lock.unlock() }; return allStarted == calls * 4 }
     static var isQuiescent: Bool {
         lock.lock(); defer { lock.unlock() }
         return mainCompleted == calls && allCompleted == allStarted && allStarted == calls * 4 && pending.isEmpty
@@ -267,7 +268,11 @@ struct ProviderUpdateAgeTests {
         let clearBefore = AgeProtocol.requestCount
         AgeProtocol.enqueue(.init(body: usage(71), held: true))
         claude.fetchUsage()
-        try wait("Claude pre-clear request starts") { AgeProtocol.requestCount > clearBefore }
+        // Clearing cancels the fetch; an auxiliary request cancelled before it starts never
+        // reaches the fixture, and quiescence counts four starts per main request.
+        try wait("Claude pre-clear requests start") {
+            AgeProtocol.requestCount > clearBefore && AgeProtocol.allRequestsStarted
+        }
         try expect(claude.menuBarUpdatedAt == c4, "pre-clear pending request retains timestamp")
         claude.clearSessionCookie()
         try expect(claude.menuBarUpdatedAt == nil, "explicit Claude clear resets timestamp immediately")
