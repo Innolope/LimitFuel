@@ -20,6 +20,8 @@ pub enum CookieError {
     Encryption,
     InvalidCookie,
     Profile,
+    /// Chrome 127+ App-Bound Encryption (`v20`): only the browser can decrypt it.
+    AppBound,
 }
 
 impl CookieError {
@@ -31,6 +33,7 @@ impl CookieError {
             CookieError::Encryption => "Browser cookies use an unsupported or damaged encryption format. Sign in again, or paste a cookie.",
             CookieError::InvalidCookie => "The browser returned an invalid, ambiguous or oversized session cookie. Sign in again, or paste a cookie.",
             CookieError::Profile => "The selected browser profile is unavailable. Detect again to choose a profile.",
+            CookieError::AppBound => unimplemented!(),
         }
     }
 }
@@ -164,6 +167,56 @@ fn profile_names(root: &Path) -> BTreeMap<String, String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CookieScheme {
+    Linux,
+    Windows,
+}
+
+pub fn decrypt_value_windows(
+    encrypted: &[u8],
+    host: &str,
+    db_version: i64,
+    key: &mut dyn FnMut() -> Result<Vec<u8>, CookieError>,
+) -> Result<String, CookieError> {
+    let _ = (encrypted, host, db_version, key);
+    unimplemented!()
+}
+
+pub fn local_state_key(local_state: &[u8]) -> Result<Vec<u8>, CookieError> {
+    let _ = local_state;
+    unimplemented!()
+}
+
+pub fn windows_browsers(local_app_data: &Path) -> Vec<Browser> {
+    let _ = local_app_data;
+    unimplemented!()
+}
+
+#[cfg(windows)]
+pub fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, CookieError> {
+    let _ = data;
+    unimplemented!()
+}
+
+#[cfg(windows)]
+pub fn dpapi_unprotect(blob: &[u8]) -> Result<Vec<u8>, CookieError> {
+    let _ = blob;
+    unimplemented!()
+}
+
+pub fn discover_with(
+    scheme: CookieScheme,
+    root: &Path,
+    profile_id: Option<&str>,
+    allow_interaction: bool,
+    now: f64,
+    keys: &dyn KeyProvider,
+) -> Result<Vec<ChromeSession>, CookieError> {
+    let _ = (scheme, root, profile_id, allow_interaction, now, keys);
+    unimplemented!()
 }
 
 pub fn discover(

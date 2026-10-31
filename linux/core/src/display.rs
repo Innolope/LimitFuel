@@ -131,3 +131,16 @@ pub fn duration_label(minutes: i64) -> String {
         format!("{minutes}m")
     }
 }
+
+/// Windows keeps 128 UTF-16 units of tooltip, including the terminator.
+pub const TOOLTIP_LIMIT: usize = 127;
+
+pub fn short_label(label: &str) -> String {
+    let _ = label;
+    unimplemented!()
+}
+
+pub fn tray_tooltip(claude: &[WindowOption], codex: &[WindowOption], mode: PercentageMode, now: f64) -> String {
+    let _ = (claude, codex, mode, now);
+    unimplemented!()
+}

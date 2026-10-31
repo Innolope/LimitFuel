@@ -189,6 +189,17 @@ pub fn resolve_executable(custom: Option<&Path>, path_env: Option<&str>, home: &
     from_path.chain(fixed).find(|candidate| is_executable(candidate))
 }
 
+pub fn resolve_windows_executable(
+    custom: Option<&Path>,
+    path_env: Option<&str>,
+    home: &Path,
+    app_data: &Path,
+    local_app_data: &Path,
+) -> Option<PathBuf> {
+    let _ = (custom, path_env, home, app_data, local_app_data);
+    unimplemented!()
+}
+
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct CodexClient {
