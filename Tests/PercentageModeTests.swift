@@ -100,20 +100,23 @@ struct PercentageModeTests {
         let app = AppDelegate()
         app.statusItem = item
         app.menuBarPreferences = MenuBarPreferences(defaults: defaults)
-        app.usageManager = UsageManager(statusItem: nil, defaults: defaults,
+        // One tracked Claude account (2026-10-31 spec correction: accounts replace the single manager).
+        defaults.set(["primary"], forKey: "claude_account_ids")
+        app.claudeAccounts = ClaudeAccounts(defaults: defaults,
             chromeReader: ChromeCookieReader(root: root, passwordProvider: { _ in fatalError("Unexpected password lookup") }), apiSession: session)
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34}}"#.utf8))
+        let claude = app.claudeAccounts.accounts[0]
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34}}"#.utf8))
         app.codexManager = CodexUsageManager(fetcher: { fatalError("Unexpected Codex fetch") }, notificationsEnabled: { false }, notify: { _, _ in fatalError("Unexpected notification") })
         app.codexManager.snapshot = CodexSnapshot(accountLabel: "offline", buckets: [CodexBucket(id: "codex", name: "Codex", primary: CodexWindow(usedPercent: 33, windowDurationMins: 300, resetsAt: nil), secondary: nil)])
         app.menuBarPreferences.onChange = { app.updateSelectedProviderIcon() }
-        let updatedBeforeToggle = app.usageManager.menuBarUpdatedAt
+        let updatedBeforeToggle = claude.menuBarUpdatedAt
         app.updateSelectedProviderIcon()
         var tooltip = item.button?.toolTip?.lowercased() ?? ""
         check(tooltip.contains("88%") && tooltip.contains("67%") && tooltip.contains("remaining"), "actual delegate defaults both provider icons/tooltips to remaining")
         app.menuBarPreferences.setPercentageMode(.used)
         tooltip = item.button?.toolTip?.lowercased() ?? ""
         check(tooltip.contains("12%") && tooltip.contains("33%") && tooltip.contains("used"), "actual delegate refreshes used mode immediately")
-        let weekly = app.usageManager.menuBarOptions.first { $0.durationMinutes == 10080 }
+        let weekly = claude.menuBarOptions.first { $0.durationMinutes == 10080 }
         check(weekly != nil, "fixture exposes weekly selection")
         if let weekly {
             app.menuBarPreferences.select(weekly.id, for: .claude)
@@ -122,8 +125,8 @@ struct PercentageModeTests {
             check(tooltip.contains("66%") && tooltip.contains("67%") && tooltip.contains("remaining"), "weekly selection uses remaining and preserves Codex display")
             check(app.menuBarPreferences.selectionID(for: .claude) == weekly.id, "mode retains selected weekly window")
         }
-        check(app.usageManager.menuBarUpdatedAt == updatedBeforeToggle, "display changes preserve usage timestamp")
-        check(app.usageManager.sessionUtilization == 12, "display changes preserve raw utilization")
+        check(claude.menuBarUpdatedAt == updatedBeforeToggle, "display changes preserve usage timestamp")
+        check(claude.sessionUtilization == 12, "display changes preserve raw utilization")
         check(DenyNetwork.requests == 0, "display mode changes do not fetch")
     }
     static func verify(_ raw: Double, mode: MenuBarPercentageMode?, expected: Int) {

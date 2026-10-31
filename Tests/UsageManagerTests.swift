@@ -82,6 +82,13 @@ private func encryptedSession() throws -> Data {
     guard CCCrypt(CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmAES), CCOptions(kCCOptionPKCS7Padding), key, 16, iv, bytes, bytes.count, &out, capacity, &written) == kCCSuccess else { throw NSError(domain: "fixture", code: 4) }
     return Data("v10".utf8) + Data(out.prefix(written))
 }
+// Sessions live in the credential store and per-account keys (2026-10-31 spec correction).
+private func stored(_ manager: UsageManager) -> String? {
+    (try? ClaudeCredentials.standard.read(account: manager.accountID, allowInteraction: false)) ?? nil
+}
+private func field(_ defaults: UserDefaults, _ manager: UsageManager, _ name: String) -> Any? {
+    defaults.object(forKey: ClaudeAccountStore.key(manager.accountID, name))
+}
 @main struct LifecycleTests {
     static func main() throws {
         let base = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CLAUDE_TEST_TMPDIR"] ?? "/private/tmp").appendingPathComponent("lifecycle-\(UUID().uuidString)")
@@ -142,7 +149,7 @@ private func encryptedSession() throws -> Data {
         require(!legacy.chromeDetectionEnabled, "legacy saved cookie defaults to manual mode")
         legacy.detectChromeSession()
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        require(legacyDefaults.string(forKey: "claude_session_cookie") == header, "legacy identity preserved")
+        require(stored(legacy) == header && legacyDefaults.string(forKey: "claude_session_cookie") == nil, "legacy identity preserved")
         legacy.clearSessionCookie()
         let (parser, _, _) = fixture()
         let validHigh = Data(#"{"five_hour":{"utilization":95,"resets_at":"2099-01-01T00:00:00.000Z"}}"#.utf8)
@@ -161,13 +168,13 @@ private func encryptedSession() throws -> Data {
         // Existing history prevents notification delivery; stop before any later high
         // response if the invalid-data regression incorrectly erases that history.
         for invalidJSON in ["not-json", #"{"seven_day":{"utilization":20}}"#] {
-            let (history, historyDefaults, _) = fixture(threshold: 90, usageNotifications: true)
+            let (history, historyDefaults, _) = fixture(cookie: header, threshold: 90, usageNotifications: true)
             history.parseUsageData(validHigh)
             history.updateStatusBar()
-            require(historyDefaults.integer(forKey: "last_notified_threshold") == 90, "seeded high usage retains notification history without delivery")
+            require(field(historyDefaults, history, "last_notified_threshold") as? Int == 90, "seeded high usage retains notification history without delivery")
             history.parseUsageData(Data(invalidJSON.utf8))
             history.updateStatusBar()
-            require(historyDefaults.integer(forKey: "last_notified_threshold") == 90, "temporary invalid or absent five-hour data preserves notification history")
+            require(field(historyDefaults, history, "last_notified_threshold") as? Int == 90, "temporary invalid or absent five-hour data preserves notification history")
             // Do not clear here: that explicitly resets state and is a different action.
         }
 
@@ -176,8 +183,8 @@ private func encryptedSession() throws -> Data {
         require(single.chromeDetectionEnabled, "Chrome mode defaults enabled")
         try db(singleRoot, withOrg: true)
         single.detectChromeSession()
-        require(spin { !single.isDetectingChrome && singleDefaults.string(forKey: "chrome_profile_id") == "Default" }, "singleton imported and pinned")
-        require(singleDefaults.string(forKey: "claude_session_cookie")?.contains("sessionKey=synthetic-import") == true, "singleton saves imported session")
+        require(spin { !single.isDetectingChrome && field(singleDefaults, single, "chrome_profile_id") as? String == "Default" }, "singleton imported and pinned")
+        require(stored(single)?.contains("sessionKey=synthetic-import") == true, "singleton saves imported session")
         require(spin { single.hasFetchedData && !single.isLoading }, "import fetch completes")
         MockProtocol.reset()
         single.detectChromeSession()
@@ -191,16 +198,16 @@ private func encryptedSession() throws -> Data {
         try db(rotatedRoot, withOrg: true, auxiliary: "two")
         rotated.detectChromeSession()
         require(spin { !rotated.isDetectingChrome && MockProtocol.snapshot().count == 4 }, "auxiliary rotation imported and fetch started")
-        require(rotatedDefaults.string(forKey: "claude_session_cookie")?.contains("aux=two") == true, "auxiliary rotated cookie stored")
-        require(rotatedDefaults.integer(forKey: "last_notified_threshold") == 75, "same session and org auxiliary rotation preserves notification threshold")
+        require(stored(rotated)?.contains("aux=two") == true, "auxiliary rotated cookie stored")
+        require(field(rotatedDefaults, rotated, "last_notified_threshold") as? Int == 75, "same session and org auxiliary rotation preserves notification threshold")
         rotated.clearSessionCookie(); MockProtocol.release()
 
         MockProtocol.reset(hold: true)
-        let (disabled, disabledDefaults, disabledRoot) = fixture(cookie: header, enabled: false)
+        let (disabled, _, disabledRoot) = fixture(cookie: header, enabled: false)
         try db(disabledRoot)
         disabled.detectChromeSession()
         RunLoop.current.run(until: Date().addingTimeInterval(0.15))
-        require(disabledDefaults.string(forKey: "claude_session_cookie") == header && !disabled.chromeDetectionEnabled, "disabled mode prevents background import")
+        require(stored(disabled) == header && !disabled.chromeDetectionEnabled, "disabled mode prevents background import")
         disabled.detectChromeSession(interactive: true)
         require(spin { !disabled.isDetectingChrome && disabled.chromeDetectionEnabled }, "successful explicit detection reenables mode")
         disabled.clearSessionCookie(); MockProtocol.release()
@@ -215,11 +222,10 @@ private func encryptedSession() throws -> Data {
         try db(multipleRoot); try db(multipleRoot, profile: "Profile 1", value: "second")
         multiple.detectChromeSession()
         require(spin { !multiple.isDetectingChrome && multiple.chromeProfiles.count == 2 }, "multiple profiles publish choices")
-        require(multipleDefaults.string(forKey: "claude_session_cookie") == header && multipleDefaults.string(forKey: "chrome_profile_id") == nil, "ambiguous discovery never selects or replaces")
-        multipleDefaults.set("Profile 7", forKey: "chrome_profile_id")
-        multiple.detectChromeSession()
+        require(stored(multiple) == header && field(multipleDefaults, multiple, "chrome_profile_id") == nil, "ambiguous discovery never selects or replaces")
+        multiple.detectChromeSession(profileID: "Profile 7")
         require(spin { !multiple.isDetectingChrome }, "missing pinned session settles")
-        require(multipleDefaults.string(forKey: "claude_session_cookie") == header, "missing pinned session preserves credential")
+        require(stored(multiple) == header, "missing pinned session preserves credential")
         multiple.clearSessionCookie()
 
         for save in [false, true] {
@@ -228,14 +234,14 @@ private func encryptedSession() throws -> Data {
             try db(root, value: "", encrypted: encryptedSession())
             let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
             let reader = ChromeCookieReader(root: root, passwordProvider: { _ in entered.signal(); _ = release.wait(timeout: .now() + 5); return Data("synthetic-password".utf8) })
-            let (manager, defaults, _) = fixture(cookie: header, reader: reader)
+            let (manager, _, _) = fixture(cookie: header, reader: reader)
             manager.detectChromeSession(interactive: true)
             require(entered.wait(timeout: .now() + 2) == .success, "import reaches blocking provider off main thread")
             if save { manager.saveSessionCookie("sessionKey=manual-wins; lastActiveOrg=\(org)") }
             else { manager.clearSessionCookie() }
             release.signal()
             require(spin { !manager.isDetectingChrome }, "stale import settles")
-            require(defaults.string(forKey: "claude_session_cookie") == (save ? "sessionKey=manual-wins; lastActiveOrg=\(org)" : nil), "manual mutation wins over delayed import")
+            require(stored(manager) == (save ? "sessionKey=manual-wins; lastActiveOrg=\(org)" : nil), "manual mutation wins over delayed import")
             require(!manager.chromeDetectionEnabled, "stale import cannot reenable automatic mode")
             manager.clearSessionCookie(); MockProtocol.release()
         }

@@ -9,6 +9,16 @@ struct MenuBarEntry: Equatable {
     var isStale: Bool = false
     var updatedAt: Date? = nil
     var percentageMode: MenuBarPercentageMode? = nil
+    // Set only when several Claude accounts share the menu bar.
+    var badge: String? = nil
+    var accountLabel: String? = nil
+}
+
+struct ClaudeMenuBarAccount {
+    let option: MenuBarWindowOption?
+    var isStale = false
+    var updatedAt: Date? = nil
+    let label: String
 }
 
 enum MenuBarStatus {
@@ -31,6 +41,37 @@ enum MenuBarStatus {
                                 percent: (percentageMode ?? .used).displayedPercent(used: option.percent),
                                 resetsAt: option.resetsAt, isStale: stale, updatedAt: updated, percentageMode: percentageMode)
         }
+    }
+
+    /// One entry per Claude account with a valid window, in account order, then Codex.
+    static func selectedEntries(claudeAccounts: [ClaudeMenuBarAccount], codex: MenuBarWindowOption?,
+                                codexIsStale: Bool = false, codexUpdatedAt: Date? = nil,
+                                percentageMode: MenuBarPercentageMode? = nil) -> [MenuBarEntry] {
+        let badges = accountBadges(claudeAccounts.map(\.label))
+        let claude = claudeAccounts.indices.flatMap { index -> [MenuBarEntry] in
+            let account = claudeAccounts[index]
+            return selectedEntries(claude: account.option, codex: nil, claudeIsStale: account.isStale,
+                                   claudeUpdatedAt: account.updatedAt, percentageMode: percentageMode).map { entry in
+                var entry = entry
+                entry.badge = badges[index]
+                entry.accountLabel = badges[index] == nil ? nil : account.label
+                return entry
+            }
+        }
+        return claude + selectedEntries(claude: nil, codex: codex, codexIsStale: codexIsStale,
+                                        codexUpdatedAt: codexUpdatedAt, percentageMode: percentageMode)
+    }
+
+    /// The first letter or digit of each label's name before "@", or every account's
+    /// position when two would look the same. A single account needs no badge.
+    static func accountBadges(_ labels: [String]) -> [String?] {
+        guard labels.count > 1 else { return labels.map { _ in nil } }
+        let badges = labels.indices.map { index -> String in
+            let name = labels[index].split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+            return name.first(where: { $0.isLetter || $0.isNumber }).map { String($0).uppercased() } ?? String(index + 1)
+        }
+        let distinct = Set(badges).count == badges.count
+        return badges.indices.map { distinct ? badges[$0] : String($0 + 1) }
     }
 
     static func resetLabel(resetsAt: Date?, now: Date = Date()) -> String? {
@@ -68,7 +109,9 @@ enum MenuBarStatus {
     static func accessibilityLabel(for entries: [MenuBarEntry], now: Date = Date()) -> String {
         guard !entries.isEmpty else { return "LimitFuel: connect Claude or Codex" }
         return entries.map { entry in
-            var label = "\(entry.provider == .claude ? "Claude" : "Codex") \(entry.percent)%"
+            var label = entry.provider == .claude ? "Claude" : "Codex"
+            if let account = entry.accountLabel { label += " \(account)" }
+            label += " \(entry.percent)%"
             if let mode = entry.percentageMode { label += " \(mode.rawValue)" }
             if let reset = resetLabel(resetsAt: entry.resetsAt, now: now) { label += ", resets in \(reset)" }
             let age = updateAge(lastUpdated: entry.updatedAt, now: now)
@@ -136,6 +179,7 @@ enum MenuBarStatus {
                 if let mark = marks[index] {
                     mark.draw(in: NSRect(x: x, y: 0, width: 18, height: 18),
                               from: .zero, operation: .sourceOver, fraction: 1)
+                    if let badge = entries[index].badge { drawBadge(badge, markX: x) }
                 } else {
                     // Keep the provider identifiable if its resource is missing.
                     let fallback = NSAttributedString(string: entries[index].provider == .claude ? "C" : "O",
@@ -159,6 +203,26 @@ enum MenuBarStatus {
         }
         image.isTemplate = true
         return image
+    }
+
+    // A solid disc on the mark's lower-right corner with the account's letter cut
+    // out, so the template image reads the same on light and dark menu bars.
+    private static func drawBadge(_ badge: String, markX x: CGFloat) {
+        guard let context = NSGraphicsContext.current else { return }
+        let disc = NSRect(x: x + 9, y: 0, width: 10, height: 10)
+        context.saveGraphicsState()
+        context.compositingOperation = .clear
+        NSBezierPath(ovalIn: disc.insetBy(dx: -1.75, dy: -1.75)).fill()
+        context.compositingOperation = .sourceOver
+        NSColor.black.setFill()
+        NSBezierPath(ovalIn: disc).fill()
+        let letter = NSAttributedString(string: String(badge.prefix(1)), attributes: [
+            .font: NSFont.systemFont(ofSize: 7.5, weight: .bold), .foregroundColor: NSColor.black
+        ])
+        let size = letter.size()
+        context.compositingOperation = .destinationOut
+        letter.draw(at: NSPoint(x: disc.midX - size.width / 2, y: disc.midY - size.height / 2 + 0.25))
+        context.restoreGraphicsState()
     }
 
     private static func drawText(_ text: NSAttributedString, at point: NSPoint, radius: CGFloat) {

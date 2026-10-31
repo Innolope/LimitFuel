@@ -14,15 +14,20 @@ import SwiftUI
         defaults.set(false, forKey: "chrome_detection_enabled")
         defaults.set(false, forKey: "usage_notifications_enabled")
         defer { defaults.removePersistentDomain(forName: suite) }
-        let usage = UsageManager(statusItem: nil, defaults: defaults)
-        usage.hasFetchedData = true
-        usage.sessionUsage = 92
-        usage.sessionUtilization = 92
-        usage.weeklyUsage = 34
-        usage.sessionResetsAt = Date().addingTimeInterval(1200)
-        usage.weeklyResetsAt = Date().addingTimeInterval(86400)
-        usage.chromeMessage = "Connected to Chrome: Personal. Rechecks hourly."
-        usage.lastChromeCheck = Date()
+        // Two Claude accounts with resolved emails, so the preview shows per-account cards.
+        defaults.set(["work", "personal"], forKey: "claude_account_ids")
+        for (id, email, profile) in [("work", "jordan@studio.example", "Work"), ("personal", "jordan.lee@example.com", "Personal")] {
+            defaults.set(true, forKey: "claude_account.\(id).chrome_sync")
+            defaults.set(profile, forKey: "claude_account.\(id).chrome_profile_name")
+            defaults.set(email, forKey: "claude_account.\(id).email")
+        }
+        let claude = ClaudeAccounts(defaults: defaults, credentials: InMemoryCredentialStore())
+        for (usage, (session, weekly)) in zip(claude.accounts, [(92.0, 34.0), (18.0, 61.0)]) {
+            usage.parseUsageData(Data(#"{"five_hour":{"utilization":\#(session)},"seven_day":{"utilization":\#(weekly)}}"#.utf8))
+            usage.sessionResetsAt = Date().addingTimeInterval(1200)
+            usage.weeklyResetsAt = Date().addingTimeInterval(86400)
+            usage.lastChromeCheck = Date()
+        }
         let codex = CodexUsageManager(fetcher: { throw CodexUsageError.unavailable },
                                      notificationsEnabled: { false }, notify: { _, _ in })
         codex.snapshot = CodexSnapshot(accountLabel: "preview@example.test", buckets: [
@@ -35,7 +40,8 @@ import SwiftUI
         for (page, settings) in [("popup", false), ("settings", true)] {
             for dark in [false, true] {
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                let view = UsageView(usageManager: usage, statusManager: StatusManager(),
+                let view = UsageView(claude: claude, settings: AppSettings(defaults: defaults),
+                                     statusManager: StatusManager(),
                                      updateManager: UpdateManager(), codexManager: codex,
                                      startsInSettings: settings)
                 let host = NSHostingView(rootView: view)

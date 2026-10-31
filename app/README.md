@@ -69,8 +69,17 @@ When you first launch LimitFuel, you'll see a welcome message. Follow these step
 2. Launch LimitFuel. It picks up the Chrome session automatically.
 3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks. Background checks never prompt.
-4. If several Chrome profiles are signed in, choose one; subsequent checks stay on
-   that profile.
+4. If several Chrome profiles are signed in, choose which ones to add; each stays
+   on its own profile.
+
+### Several Claude accounts
+
+Settings > Claude accounts lists every tracked account by its claude.ai email.
+**Add from Chrome** adds another signed-in Chrome profile, **Add Manual Cookie**
+adds an account from any browser, and the trash button removes one. Each account
+gets its own popup card, its own menu bar percentage (marked with a letter once
+there are two or more) and its own usage alerts. The same Claude account is never
+added twice.
 
 No browser extension, Accessibility or Automation permission is needed; Chrome
 storage is only read. Missing, expired, locked or unsupported storage produces a
@@ -78,8 +87,7 @@ visible message and preserves the saved cookie. Click Detect after signing in or
 unlocking. Standard Google Chrome Default/Profile N directories are supported.
 
 A manual cookie option remains for other browsers, Chrome channels and custom data
-directories. Saving or clearing a manual cookie stops hourly imports until you
-click Detect Chrome Session again.
+directories. Manual-cookie accounts are not refreshed from Chrome.
 
 ### Codex
 
@@ -108,7 +116,8 @@ Access settings by clicking the gear icon in the popup:
 
 ## 🔒 Privacy & Security
 
-- ✅ **Session cookies stored locally** - never sent anywhere except claude.ai
+- ✅ **Session cookies in your Keychain** - each account's cookie is a login keychain
+  item that only LimitFuel can read without asking; never sent anywhere except claude.ai
 - ✅ **Read-only provider access** - Codex handles its own sign-in and usage requests
 - ✅ **Controllable diagnostics** - crash and error reports are on by default and
   can be disabled immediately in Settings. Reports exclude credentials, account
@@ -213,9 +222,15 @@ It does not launch automatically and is not a notarized distribution artifact.
 The default build still requires the configured Developer ID certificate and
 fails on signing errors. Never use local mode for a public release.
 
-Session cookies retain the existing local UserDefaults storage for compatibility.
-Chrome Safe Storage keys are requested through macOS Keychain and held only during
-an import; cookie values, keys and raw API responses are never logged.
+Session cookies live in the login keychain (service
+`com.innolope.limitfuel.claude-session`, one item per account). UserDefaults keeps
+only account metadata such as the email and the pinned Chrome profile. Version 1.0.x
+stored the cookie in UserDefaults; the first launch moves it into the Keychain and
+deletes the plaintext only after the Keychain write succeeds. Background reads never
+show a Keychain prompt; if macOS needs approval (for example after an ad-hoc local
+rebuild), the account says so and **Refresh** asks once. Chrome Safe Storage keys
+are requested through macOS Keychain and held only during an import; cookie values,
+keys and raw API responses are never logged.
 
 ## Codex connection
 
@@ -234,5 +249,5 @@ and Chrome cookie import remains hourly. Smart alerts share the usage notificati
 setting, with Codex deduplication scoped to its account, bucket and quota window.
 Service status alerts disappear once their latest post is more than six hours old.
 
-Installations upgraded with a saved cookie keep using it and skip automatic Chrome
-checks. Click Detect Chrome Session to switch to automatic hourly sync.
+Installations upgraded with a saved cookie keep using it as their first account,
+with the same Chrome or manual mode as before.
