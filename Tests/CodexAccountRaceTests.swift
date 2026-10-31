@@ -21,15 +21,50 @@ private final class RaceFetchFixture {
 @main struct CodexAccountRaceTests {
     private static let initial = ["initialize", "initialized", "account/read", "account/rateLimits/read"]
 
+    private static var sharedScript: URL?
+
+    // macOS checks every new executable on its first launch, which took 5-10 s here
+    // and counted against the client deadlines under test. One script is written and
+    // launched once, outside every deadline; each fixture is a symlink to it with its
+    // own mode file and request log.
+    private static func fixtureScript(root: URL) throws -> URL {
+        if let script = sharedScript { return script }
+        let script = root.appendingPathComponent("race-fixture.py")
+        try fixtureSource.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        sharedScript = script
+        let warm = Process()
+        warm.executableURL = try fixture(root: root, mode: "same").0
+        warm.standardInput = FileHandle.nullDevice
+        warm.standardOutput = FileHandle.nullDevice
+        warm.standardError = FileHandle.nullDevice
+        try warm.run()
+        let deadline = Date().addingTimeInterval(60)
+        while warm.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if warm.isRunning { warm.terminate() }
+        check(!warm.isRunning && warm.terminationStatus == 0, "fixture script first launch completes within 60 s")
+        return script
+    }
+
     private static func fixture(root: URL, mode: String, update: String = #"{"params":{"authMode":"chatgpt"}}"#) throws -> (URL, URL) {
+        let script = try fixtureScript(root: root)
         let name = UUID().uuidString
         let executable = root.appendingPathComponent(name + ".py")
         let requests = root.appendingPathComponent(name + ".requests")
-        let script = """
+        let config = try JSONSerialization.data(withJSONObject: ["mode": mode, "update": update])
+        try config.write(to: root.appendingPathComponent(name + ".json"))
+        try FileManager.default.createSymbolicLink(at: executable, withDestinationURL: script)
+        return (executable, requests)
+    }
+
+    private static let fixtureSource = """
         #!/usr/bin/env python3
         import json, os, sys, time
-        mode = '\(mode)'
-        update = json.loads('\(update)')
+        base = os.path.splitext(__file__)[0]
+        with open(base + '.json') as config:
+            settings = json.load(config)
+        mode = settings['mode']
+        update = json.loads(settings['update'])
         account_reads = 0
         limit_reads = 0
         def send(message):
@@ -42,7 +77,7 @@ private final class RaceFetchFixture {
             return {'account':{'type':'chatgpt','email':email,'planType':'plus'}, 'requiresOpenaiAuth':False}
         def limits(percent):
             return {'rateLimits':{'limitId':'codex','primary':{'usedPercent':percent,'windowDurationMins':300,'resetsAt':4102444800},'secondary':None}}
-        with open(os.path.splitext(__file__)[0] + '.requests', 'w', buffering=1) as log:
+        with open(base + '.requests', 'w', buffering=1) as log:
             for line in sys.stdin:
                 request = json.loads(line)
                 log.write(json.dumps(request) + '\\n')
@@ -84,13 +119,11 @@ private final class RaceFetchFixture {
                 if mode == 'exit' and method == 'account/rateLimits/read':
                     os._exit(0)
         """
-        try script.write(to: executable, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        return (executable, requests)
-    }
 
     private static func methods(_ file: URL) throws -> [String] {
-        try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { line in
+        check(FileManager.default.fileExists(atPath: file.path),
+              "fixture logged its requests before the client finished: \(file.lastPathComponent)")
+        return try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map { line in
             let value = try JSONSerialization.jsonObject(with: Data(line.utf8)) as! [String: Any]
             guard let method = value["method"] as? String else { fatalError("request missing method") }
             return method
