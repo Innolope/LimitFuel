@@ -317,7 +317,7 @@ mod job {
                 }
                 let job = Job(handle);
                 let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                limits.BasicLimitInformation.LimitFlags = 0; let _ = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
                 let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
                 let set = SetInformationJobObject(
                     job.0,
@@ -391,7 +391,6 @@ mod job {
                 while start.elapsed() < Duration::from_millis(500) && !matches!(child.try_wait(), Ok(Some(_))) {
                     std::thread::sleep(Duration::from_millis(25));
                 }
-                job.terminate();
                 drop(job);
                 let _ = child.wait();
             });
