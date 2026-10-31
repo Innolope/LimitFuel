@@ -1,0 +1,21 @@
+[package]
+name = "limitfuel-core"
+description = "Claude and Codex usage logic shared by LimitFuel for Linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aes = "0.9.3"
+cbc = { version = "0.2.1", features = ["alloc", "block-padding"] }
+libc = "0.2.190"
+pbkdf2 = { version = "0.12.2", default-features = false, features = ["hmac"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde_json = "1.0.154"
+sha1 = "0.10.7"
+sha2 = "0.11.1"
+ureq = "3.4.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LimitFuel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <img src="icon.png" alt="" class="logo" width="40" height="40">
+    <div class="title">
+      <h1>LimitFuel</h1>
+      <span class="subtle" id="version"></span>
+    </div>
+    <button type="button" class="ghost" id="refresh">Refresh</button>
+  </header>
+
+  <div class="notice" id="tray-warning" hidden>
+    <strong>No tray icon host is running.</strong>
+    On GNOME, install the “AppIndicator and KStatusNotifierItem Support” extension, then start LimitFuel again.
+    Until then, this window shows your usage.
+  </div>
+
+  <main>
+    <section class="card provider" id="claude-card">
+      <div class="card-head">
+        <h2>Claude</h2>
+        <span class="badge" id="claude-badge"></span>
+      </div>
+      <div class="meters" id="claude-meters"></div>
+      <p class="message" id="claude-message" hidden></p>
+      <p class="subtle" id="claude-updated"></p>
+    </section>
+
+    <section class="card provider" id="codex-card">
+      <div class="card-head">
+        <h2>Codex</h2>
+        <span class="badge" id="codex-badge"></span>
+      </div>
+      <div class="meters" id="codex-meters"></div>
+      <p class="message" id="codex-message" hidden></p>
+      <p class="subtle" id="codex-updated"></p>
+    </section>
+
+    <section class="card">
+      <h2>Connect Claude</h2>
+      <p class="subtle">LimitFuel reads your claude.ai session from Chrome, Chromium or Brave. It only reads claude.ai cookies, and never writes to your browser.</p>
+      <div class="row">
+        <button type="button" class="primary" id="detect">Detect browser session</button>
+        <button type="button" class="ghost danger" id="disconnect" hidden>Disconnect</button>
+      </div>
+      <div class="profiles" id="profiles" hidden>
+        <p class="subtle">Several signed-in profiles were found. Choose one:</p>
+        <div class="profile-list" id="profile-list"></div>
+      </div>
+      <p class="message" id="connect-message" hidden></p>
+      <details id="paste">
+        <summary>Paste a cookie instead</summary>
+        <p class="subtle">In your browser’s developer tools, copy the <code>Cookie</code> request header from any claude.ai request. It is kept in your keyring, not in a file.</p>
+        <textarea id="cookie" rows="3" spellcheck="false" autocomplete="off" placeholder="sessionKey=…; lastActiveOrg=…"></textarea>
+        <div class="row"><button type="button" class="primary" id="save-cookie">Use this cookie</button></div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Codex</h2>
+      <p class="subtle">LimitFuel asks your installed Codex CLI for your ChatGPT plan limits. Sign in with <code>codex login</code>.</p>
+      <label class="field">
+        <span>Codex executable</span>
+        <div class="row">
+          <input id="codex-path" type="text" spellcheck="false" autocomplete="off">
+          <button type="button" class="ghost" id="save-codex">Save</button>
+        </div>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Tray</h2>
+      <label class="field">
+        <span>Claude window</span>
+        <select id="claude-window"></select>
+      </label>
+      <label class="field">
+        <span>Codex window</span>
+        <select id="codex-window"></select>
+      </label>
+      <div class="field">
+        <span>Show</span>
+        <div class="segmented" role="radiogroup" aria-label="Percentage shown">
+          <button type="button" role="radio" data-mode="remaining">Remaining</button>
+          <button type="button" role="radio" data-mode="used">Used</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>General</h2>
+      <label class="toggle"><input type="checkbox" id="notifications"><span>Notify at 25, 50, 75 and 90% used</span></label>
+      <label class="toggle"><input type="checkbox" id="autostart"><span>Open at login</span></label>
+      <label class="toggle"><input type="checkbox" id="diagnostics"><span>Send error reports</span></label>
+      <p class="subtle" id="diagnostics-note">Reports contain only the provider and an error type such as “timeout”, never cookies, accounts or usage.</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -13,6 +13,8 @@ Build this fork with `cd app && ./build.sh --local`. The app is created at
 `app/build/LimitFuel.app`. Fork changes have not been released as a notarized installer.
 Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar).
 
+**Linux:** a tray version with the same Claude and Codex tracking lives in [`linux/`](linux/README.md). CI builds an AppImage, a `.deb` and an `.rpm`.
+
 ## 📦 Set Up (1mn)
 
 1. Sign in to [claude.ai/settings/usage](https://claude.ai/settings/usage) in Google Chrome.
