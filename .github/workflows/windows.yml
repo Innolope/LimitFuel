@@ -45,11 +45,24 @@ jobs:
           installed="$LOCALAPPDATA/LimitFuel/limitfuel.exe"
           test -f "$installed"
           test "$("$installed" --version)" = "LimitFuel $version"
+          running() { tasklist //FI "IMAGENAME eq limitfuel.exe" //NH | grep -ci 'limitfuel.exe' || true; }
           # The tray app must start, create its icon and keep running.
           "$installed" &
           sleep 20
-          tasklist //FI "IMAGENAME eq limitfuel.exe" //NH | grep -i limitfuel.exe
+          test "$(running)" = 1
+          # A second launch hands over to the first one and exits.
+          "$installed" &
+          sleep 10
+          test "$(running)" = 1
           taskkill //F //IM limitfuel.exe
+          # Uninstalling removes open at login. The uninstaller re-runs itself from a
+          # temporary copy, so wait for the value to go.
+          run_key='HKCU\Software\Microsoft\Windows\CurrentVersion\Run'
+          reg add "$run_key" //v LimitFuel //t REG_SZ //d "\"$(cygpath -w "$installed")\"" //f
+          "$LOCALAPPDATA/LimitFuel/uninstall.exe" //S
+          for _ in $(seq 1 60); do reg query "$run_key" //v LimitFuel >/dev/null 2>&1 || break; sleep 1; done
+          if reg query "$run_key" //v LimitFuel >/dev/null 2>&1; then echo "Run value left behind"; exit 1; fi
+          test ! -e "$installed"
       - uses: actions/upload-artifact@v4
         with:
           name: limitfuel-windows

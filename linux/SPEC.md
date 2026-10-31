@@ -545,7 +545,7 @@ W6. handle: a custom Codex path to a `.ps1`, a directory or a missing file → n
 
 Concurrency
 W7. handle: Chrome running and holding `Cookies` locked → `Database` with "close the browser or paste a cookie"; no copy, no retry loop.
-W8. handle: a second launch → the single-instance plugin focuses the first (same as Linux).
+W8. handle: a second launch → the single-instance plugin focuses the first and the second exits (same as Linux; checked in CI).
 
 Timeouts
 W9. handle: Codex hangs or its shim never starts the server → `Timeout` at the shared 45 s deadline, the reader thread does not block the poll thread.
@@ -564,11 +564,11 @@ W15. handle: cookie header over 2560 bytes → split into chunks; over 8 chunks 
 
 Migration and install
 W16. handle: open at login disabled in Task Manager → shown as off; turning it on clears the override.
-W17. handle: uninstall → Run and StartupApproved values removed; an update keeps them.
+W17. handle: uninstall → Run and StartupApproved values removed (checked in CI); an update keeps them.
 W18. out: Authenticode signing. SmartScreen warns on the unsigned Beta; the README and the download page say so.
 W19. out: ARM64 Windows. x64 only.
 
 Observability
 W20. handle: release `limitfuel-windows@{version}` with tag `platform: windows`; same scrubber and policy.
 W21. defer: WebView2 or native crashes are not captured; Rust panics are.
-W22. defer: tray behavior, notifications and Credential Manager are verified only on CI (no interactive desktop); not yet on a real Windows desktop.
+W22. defer: CI covers install, start, single instance and uninstall on a Windows runner. Notifications, Credential Manager storage, open at login and the settings window have not run on an interactive Windows desktop yet.
