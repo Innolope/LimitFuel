@@ -1,5 +1,6 @@
 //! The tray icon, its label and its menu. On Linux (StatusNotifierItem) a click
-//! always opens the menu, so the menu carries every usage line.
+//! always opens the menu, so the menu carries every usage line. Windows has no
+//! label next to the icon, so there the tooltip lists every limit too.
 
 use crate::state::{ProviderState, Shared, lock, now};
 use limitfuel_core::display;
@@ -10,7 +11,24 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
 
 const TRAY_ID: &str = "main";
-static LAST_SHOWN: Mutex<Option<(String, Vec<String>)>> = Mutex::new(None);
+static LAST_SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
+
+#[derive(Clone)]
+struct Shown {
+    label: String,
+    tooltip: String,
+    lines: Vec<String>,
+}
+
+fn tooltip(shared: &Shared) -> String {
+    if !cfg!(windows) {
+        return "LimitFuel".into();
+    }
+    let mode = lock(&shared.settings).mode();
+    let claude = lock(&shared.claude).windows.clone();
+    let codex = lock(&shared.codex).windows.clone();
+    display::tray_tooltip(&claude, &codex, mode, now())
+}
 
 fn menu_lines(shared: &Shared) -> Vec<String> {
     let mode = lock(&shared.settings).mode();
@@ -68,10 +86,11 @@ fn build_menu(app: &AppHandle, lines: &[String]) -> tauri::Result<Menu<Wry>> {
 pub fn create(app: &AppHandle, shared: &Shared) -> tauri::Result<()> {
     let lines = menu_lines(shared);
     let label = shared.tray_label();
+    let tooltip = tooltip(shared);
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .title(&label)
-        .tooltip("LimitFuel")
+        .tooltip(&tooltip)
         .menu(&build_menu(app, &lines)?)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -86,34 +105,36 @@ pub fn create(app: &AppHandle, shared: &Shared) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
-    *lock(&LAST_SHOWN) = Some((label, lines));
+    *lock(&LAST_SHOWN) = Some(Shown { label, tooltip, lines });
     Ok(())
 }
 
-/// Updates the label and menu only when their text changed: replacing a menu
-/// closes it on some desktops, and this runs every 30 seconds.
+/// Updates the label, tooltip and menu only when their text changed: replacing a
+/// menu closes it on some desktops, and this runs every 30 seconds.
 pub fn refresh(app: &AppHandle, shared: &Shared) {
-    let label = shared.tray_label();
-    let lines = menu_lines(shared);
+    let next = Shown { label: shared.tray_label(), tooltip: tooltip(shared), lines: menu_lines(shared) };
     let _ = app.emit("state-changed", ());
     let mut shown = lock(&LAST_SHOWN);
-    let (label_changed, lines_changed) = match shown.as_ref() {
-        Some((old_label, old_lines)) => (*old_label != label, *old_lines != lines),
-        None => (true, true),
+    let old = shown.replace(next.clone());
+    drop(shown);
+    let (label_changed, tooltip_changed, lines_changed) = match &old {
+        Some(old) => (old.label != next.label, old.tooltip != next.tooltip, old.lines != next.lines),
+        None => (true, true, true),
     };
-    if !label_changed && !lines_changed {
+    if !label_changed && !tooltip_changed && !lines_changed {
         return;
     }
-    *shown = Some((label.clone(), lines.clone()));
-    drop(shown);
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(tray) = handle.tray_by_id(TRAY_ID) else { return };
         if label_changed {
-            let _ = tray.set_title(Some(&label));
+            let _ = tray.set_title(Some(&next.label));
+        }
+        if tooltip_changed {
+            let _ = tray.set_tooltip(Some(&next.tooltip));
         }
         if lines_changed
-            && let Ok(menu) = build_menu(&handle, &lines)
+            && let Ok(menu) = build_menu(&handle, &next.lines)
         {
             let _ = tray.set_menu(Some(menu));
         }

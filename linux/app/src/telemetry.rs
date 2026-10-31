@@ -30,7 +30,7 @@ fn scrub(mut event: Event<'static>) -> Option<Event<'static>> {
     event.debug_meta = Default::default();
     event.contexts.retain(|key, _| key == "os");
     event.tags.retain(|key, _| key == "provider" || key == "code" || key == "platform");
-    event.tags.insert("platform".into(), "linux".into());
+    event.tags.insert("platform".into(), crate::state::PLATFORM.into());
     if event.message.as_deref().is_some_and(|message| message != "Connection error") {
         event.message = None;
     }
@@ -62,7 +62,8 @@ pub fn set_enabled(enabled: bool) {
     let mut guard = GUARD.lock().unwrap_or_else(|e| e.into_inner());
     if enabled && guard.is_none() && is_configured() {
         let mut options = sentry::ClientOptions::default();
-        options.release = Some(Cow::Owned(format!("limitfuel-linux@{}", env!("CARGO_PKG_VERSION"))));
+        let release = format!("limitfuel-{}@{}", crate::state::PLATFORM, env!("CARGO_PKG_VERSION"));
+        options.release = Some(Cow::Owned(release));
         options.environment = Some("production".into());
         options.server_name = None;
         options.send_default_pii = false;
@@ -91,6 +92,7 @@ pub fn report(provider: DiagnosticProvider, code: DiagnosticCode) {
 }
 
 /// Whether any network route exists. Failures without one say nothing about the providers.
+#[cfg(not(windows))]
 pub fn online() -> bool {
     let has_default = |path: &str, matches: &dyn Fn(&[&str]) -> bool| {
         std::fs::read_to_string(path)
@@ -109,4 +111,29 @@ pub fn online() -> bool {
         })
         .unwrap_or(false);
     ipv4 || ipv6
+}
+
+/// Whether a default route (IPv4 or IPv6) exists on an interface other than loopback.
+#[cfg(windows)]
+pub fn online() -> bool {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        FreeMibTable, GetIpForwardTable2, MIB_IPFORWARD_ROW2, MIB_IPFORWARD_TABLE2,
+    };
+    use windows_sys::Win32::Networking::WinSock::AF_UNSPEC;
+    const IF_TYPE_SOFTWARE_LOOPBACK: u64 = 24;
+    let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
+    // SAFETY: on success Windows allocates the table, released with FreeMibTable.
+    unsafe {
+        if GetIpForwardTable2(AF_UNSPEC, &mut table) != 0 || table.is_null() {
+            return false;
+        }
+        let first = (&raw const (*table).Table).cast::<MIB_IPFORWARD_ROW2>();
+        let rows = std::slice::from_raw_parts(first, (*table).NumEntries as usize);
+        // The interface type is the top 16 bits of its LUID.
+        let found = rows.iter().any(|row| {
+            row.DestinationPrefix.PrefixLength == 0 && (row.InterfaceLuid.Value >> 48) != IF_TYPE_SOFTWARE_LOOPBACK
+        });
+        FreeMibTable(table.cast());
+        found
+    }
 }

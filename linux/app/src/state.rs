@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Release names, Sentry tags and the settings window's text depend on this.
+pub const PLATFORM: &str = if cfg!(windows) { "windows" } else { "linux" };
+
 pub fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
@@ -135,6 +138,7 @@ impl Shared {
             .collect::<Vec<_>>();
         json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "platform": PLATFORM,
             "claude": provider(&lock(&self.claude), &claude_selected),
             "codex": provider(&lock(&self.codex), &codex_selected),
             "connected": lock(&self.cookie).is_some(),

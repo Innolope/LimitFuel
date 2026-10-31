@@ -1,4 +1,6 @@
 // Table-driven cases are tuples on purpose.
+// Fake executables, symlinks and permission bits are Unix-only; Windows has its own tests.
+#![cfg(unix)]
 #![allow(clippy::type_complexity)]
 
 //! Acceptance tests for `limitfuel_core::codex`, written from SPEC.md only.

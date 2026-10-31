@@ -6,11 +6,16 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+#[cfg(unix)]
+use std::process::Child;
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,10 +172,26 @@ pub fn window_label(minutes: Option<i64>, role: &str) -> String {
     }
 }
 
+#[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    is_windows_executable(path)
+}
+
+/// What Windows runs by name: `.exe`, `.cmd`, `.bat` and `.com`, never a script like `.ps1`.
+fn is_windows_executable(path: &Path) -> bool {
+    let runnable = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["exe", "cmd", "bat", "com"].iter().any(|x| e.eq_ignore_ascii_case(x)));
+    runnable && path.metadata().is_ok_and(|m| m.is_file())
+}
+
+#[cfg(not(windows))]
 pub fn resolve_executable(custom: Option<&Path>, path_env: Option<&str>, home: &Path) -> Option<PathBuf> {
     if let Some(custom) = custom.filter(|p| is_executable(p)) {
         return Some(custom.to_path_buf());
@@ -189,6 +210,52 @@ pub fn resolve_executable(custom: Option<&Path>, path_env: Option<&str>, home: &
     from_path.chain(fixed).find(|candidate| is_executable(candidate))
 }
 
+#[cfg(windows)]
+pub fn resolve_executable(custom: Option<&Path>, path_env: Option<&str>, home: &Path) -> Option<PathBuf> {
+    let known = |name: &str, fallback: &[&str]| {
+        std::env::var_os(name)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| fallback.iter().fold(home.to_path_buf(), |path, part| path.join(part)))
+    };
+    let app_data = known("APPDATA", &["AppData", "Roaming"]);
+    let local_app_data = known("LOCALAPPDATA", &["AppData", "Local"]);
+    resolve_windows_executable(custom, path_env, home, &app_data, &local_app_data)
+}
+
+/// The npm shim (`codex.cmd`) is the usual install; the rest are other package managers.
+pub fn resolve_windows_executable(
+    custom: Option<&Path>,
+    path_env: Option<&str>,
+    home: &Path,
+    app_data: &Path,
+    local_app_data: &Path,
+) -> Option<PathBuf> {
+    if let Some(custom) = custom.filter(|p| is_windows_executable(p)) {
+        return Some(custom.to_path_buf());
+    }
+    let under = |base: &Path, parts: &[&str]| parts.iter().fold(base.to_path_buf(), |path, part| path.join(part));
+    // Only absolute entries: Windows would otherwise also look in the current directory.
+    let from_path = path_env
+        .unwrap_or("")
+        .split(';')
+        .map(|entry| {
+            let entry = entry.trim();
+            entry.strip_prefix('"').and_then(|e| e.strip_suffix('"')).unwrap_or(entry)
+        })
+        .filter(|entry| !entry.is_empty() && Path::new(entry).is_absolute())
+        .flat_map(|dir| [Path::new(dir).join("codex.exe"), Path::new(dir).join("codex.cmd")]);
+    let fixed = [
+        under(app_data, &["npm", "codex.cmd"]),
+        under(local_app_data, &["pnpm", "codex.cmd"]),
+        under(home, &[".bun", "bin", "codex.exe"]),
+        under(home, &["scoop", "shims", "codex.exe"]),
+        under(local_app_data, &["Microsoft", "WinGet", "Links", "codex.exe"]),
+        under(home, &[".local", "bin", "codex.exe"]),
+    ];
+    from_path.chain(fixed).find(|candidate| is_windows_executable(candidate))
+}
+
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct CodexClient {
@@ -198,10 +265,12 @@ pub struct CodexClient {
 
 /// Signals the whole process group on every exit: `codex` is often a Node shim
 /// whose native child would otherwise outlive it.
+#[cfg(unix)]
 struct ProcessGroup {
     child: Option<Child>,
 }
 
+#[cfg(unix)]
 impl Drop for ProcessGroup {
     fn drop(&mut self) {
         let Some(mut child) = self.child.take() else { return };
@@ -216,9 +285,198 @@ impl Drop for ProcessGroup {
     }
 }
 
+#[cfg(windows)]
+mod job {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+        TerminateJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    /// A Job Object that ends every process in it when closed.
+    pub struct Job(HANDLE);
+
+    // SAFETY: a job handle may be used and closed from any thread.
+    unsafe impl Send for Job {}
+
+    impl Job {
+        pub fn new() -> Option<Job> {
+            // SAFETY: plain Win32 calls; the handle is owned by the returned Job.
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return None;
+                }
+                let job = Job(handle);
+                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+                let set = SetInformationJobObject(
+                    job.0,
+                    JobObjectExtendedLimitInformation,
+                    (&raw const limits).cast(),
+                    size,
+                );
+                (set != 0).then_some(job)
+            }
+        }
+
+        /// The child was created suspended, so nothing it starts can escape the job.
+        pub fn adopt(&self, child: &Child) -> bool {
+            // SAFETY: both handles are valid; the child's handle stays owned by `child`.
+            let assigned = unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle()) } != 0;
+            assigned && resume(child.id())
+        }
+
+        pub fn terminate(&self) {
+            // SAFETY: valid job handle.
+            unsafe { TerminateJobObject(self.0, 1) };
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: closing the last handle also kills the job (KILL_ON_JOB_CLOSE).
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// Resumes the suspended primary thread. `std` does not expose its handle.
+    fn resume(pid: u32) -> bool {
+        // SAFETY: a thread snapshot walked with a correctly sized entry; every handle is closed.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                return false;
+            }
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut resumed = false;
+            let mut more = Thread32First(snapshot, &mut entry) != 0;
+            while more {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if !thread.is_null() {
+                        resumed |= ResumeThread(thread) != u32::MAX;
+                        CloseHandle(thread);
+                    }
+                }
+                more = Thread32Next(snapshot, &mut entry) != 0;
+            }
+            CloseHandle(snapshot);
+            resumed
+        }
+    }
+
+    /// Ends the whole tree on every exit: `codex.cmd` starts node, which starts codex.exe.
+    pub struct ProcessGroup {
+        pub child: Option<Child>,
+        pub job: Option<Job>,
+    }
+
+    impl Drop for ProcessGroup {
+        fn drop(&mut self) {
+            let (Some(mut child), Some(job)) = (self.child.take(), self.job.take()) else { return };
+            // Stdin is already closed; give the server half a second to exit on its own.
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(500) && !matches!(child.try_wait(), Ok(Some(_))) {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                job.terminate();
+                drop(job);
+                let _ = child.wait();
+            });
+        }
+    }
+}
+
+#[cfg(windows)]
+use job::{Job, ProcessGroup};
+
+/// The child's stdout, read until a deadline without blocking past it.
+#[cfg(unix)]
+struct Output(ChildStdout);
+
+#[cfg(unix)]
+impl Output {
+    /// `Ok(None)`: nothing within `wait`. `Ok(Some(empty))`: end of output.
+    fn read(&mut self, wait: Duration) -> Result<Option<Vec<u8>>, CodexError> {
+        let mut descriptor = libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        // SAFETY: one valid pollfd for the child's stdout, which this struct owns.
+        let ready = unsafe { libc::poll(&mut descriptor, 1, wait.as_millis() as libc::c_int) };
+        if ready < 0 {
+            if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted {
+                return Ok(None);
+            }
+            return Err(CodexError::Protocol);
+        }
+        if ready == 0 {
+            return Ok(None);
+        }
+        let mut chunk = [0u8; 65_536];
+        match self.0.read(&mut chunk) {
+            Ok(count) => Ok(Some(chunk[..count].to_vec())),
+            Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock) => Ok(None),
+            Err(_) => Err(CodexError::Protocol),
+        }
+    }
+}
+
+/// Windows pipes cannot be polled, so a helper thread reads into a bounded queue.
+#[cfg(windows)]
+struct Output(std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>);
+
+#[cfg(windows)]
+impl Output {
+    fn new(mut stdout: ChildStdout) -> Self {
+        // At most 16 chunks of 64 KiB wait in the queue; MAX_OUTPUT stops the reader sooner.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+        std::thread::spawn(move || {
+            loop {
+                let mut chunk = vec![0u8; 65_536];
+                let message = match stdout.read(&mut chunk) {
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Ok(count) => {
+                        chunk.truncate(count);
+                        Ok(chunk)
+                    }
+                    Err(error) => Err(error),
+                };
+                let last = !matches!(&message, Ok(chunk) if !chunk.is_empty());
+                // The receiver is gone once the exchange ended; the job kill closes the pipe.
+                if sender.send(message).is_err() || last {
+                    break;
+                }
+            }
+        });
+        Output(receiver)
+    }
+
+    fn read(&mut self, wait: Duration) -> Result<Option<Vec<u8>>, CodexError> {
+        use std::sync::mpsc::RecvTimeoutError;
+        match self.0.recv_timeout(wait) {
+            Ok(Ok(chunk)) => Ok(Some(chunk)),
+            // A broken pipe is how a Windows child's exit looks.
+            Ok(Err(error)) if error.kind() == ErrorKind::BrokenPipe => Ok(Some(Vec::new())),
+            Ok(Err(_)) => Err(CodexError::Protocol),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => Ok(Some(Vec::new())),
+        }
+    }
+}
+
 struct Connection {
     input: ChildStdin,
-    output: ChildStdout,
+    output: Output,
     buffer: Vec<u8>,
     total: usize,
     deadline: Instant,
@@ -274,35 +532,15 @@ impl Connection {
             if remaining.is_zero() {
                 return Err(CodexError::Timeout);
             }
-            let mut descriptor =
-                libc::pollfd { fd: self.output.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-            let wait = remaining.as_millis().min(50) as libc::c_int;
-            // SAFETY: one valid pollfd for the child's stdout, which this struct owns.
-            let ready = unsafe { libc::poll(&mut descriptor, 1, wait) };
-            if ready < 0 {
-                if std::io::Error::last_os_error().kind() == ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(CodexError::Protocol);
+            let Some(chunk) = self.output.read(remaining.min(Duration::from_millis(50)))? else { continue };
+            if chunk.is_empty() {
+                return Err(if Instant::now() >= self.deadline { CodexError::Timeout } else { CodexError::Protocol });
             }
-            if ready == 0 {
-                continue;
+            self.total += chunk.len();
+            if self.total > MAX_OUTPUT {
+                return Err(CodexError::InvalidData);
             }
-            let mut chunk = [0u8; 65_536];
-            match self.output.read(&mut chunk) {
-                Ok(0) => {
-                    return Err(if Instant::now() >= self.deadline { CodexError::Timeout } else { CodexError::Protocol });
-                }
-                Ok(count) => {
-                    self.total += count;
-                    if self.total > MAX_OUTPUT {
-                        return Err(CodexError::InvalidData);
-                    }
-                    self.buffer.extend_from_slice(&chunk[..count]);
-                }
-                Err(error) if matches!(error.kind(), ErrorKind::Interrupted | ErrorKind::WouldBlock) => continue,
-                Err(_) => return Err(CodexError::Protocol),
-            }
+            self.buffer.extend_from_slice(&chunk);
         }
     }
 
@@ -328,31 +566,7 @@ impl CodexClient {
         if !is_executable(&self.executable) {
             return Err(CodexError::Unavailable);
         }
-        // A GUI session's PATH often lacks the directory of an nvm-managed node,
-        // which usually sits next to the codex shim.
-        let mut path = self.executable.parent().map(|p| p.display().to_string()).unwrap_or_default();
-        for extra in [std::env::var("PATH").unwrap_or_default(), "/usr/local/bin:/usr/bin:/bin".into()] {
-            if !extra.is_empty() {
-                path.push(':');
-                path.push_str(&extra);
-            }
-        }
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-        let mut child = Command::new(&self.executable)
-            .args(["app-server", "--listen", "stdio://"])
-            .current_dir(if home.is_dir() { home } else { PathBuf::from("/") })
-            .env("PATH", path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .map_err(|_| CodexError::Unavailable)?;
-        let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else {
-            drop(ProcessGroup { child: Some(child) });
-            return Err(CodexError::Protocol);
-        };
-        let _group = ProcessGroup { child: Some(child) };
+        let (input, output, _group) = self.spawn()?;
         let mut connection = Connection {
             input,
             output,
@@ -385,5 +599,75 @@ impl CodexClient {
             }
         }
         Ok(CodexSnapshot { account_label: label, buckets })
+    }
+
+    #[cfg(unix)]
+    fn spawn(&self) -> Result<(ChildStdin, Output, ProcessGroup), CodexError> {
+        // A GUI session's PATH often lacks the directory of an nvm-managed node,
+        // which usually sits next to the codex shim.
+        let mut path = self.executable.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        for extra in [std::env::var("PATH").unwrap_or_default(), "/usr/local/bin:/usr/bin:/bin".into()] {
+            if !extra.is_empty() {
+                path.push(':');
+                path.push_str(&extra);
+            }
+        }
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
+        let mut child = Command::new(&self.executable)
+            .args(["app-server", "--listen", "stdio://"])
+            .current_dir(if home.is_dir() { home } else { PathBuf::from("/") })
+            .env("PATH", path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .map_err(|_| CodexError::Unavailable)?;
+        let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else {
+            drop(ProcessGroup { child: Some(child) });
+            return Err(CodexError::Protocol);
+        };
+        Ok((input, Output(output), ProcessGroup { child: Some(child) }))
+    }
+
+    #[cfg(windows)]
+    fn spawn(&self) -> Result<(ChildStdin, Output, ProcessGroup), CodexError> {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+        // The npm shim needs node; a login session's PATH usually has it, the default install dir is the fallback.
+        let mut path = self.executable.parent().map(|p| p.as_os_str().to_os_string()).unwrap_or_default();
+        let node = std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("nodejs").into_os_string());
+        for extra in [std::env::var_os("PATH"), node].into_iter().flatten() {
+            if !extra.is_empty() {
+                path.push(";");
+                path.push(extra);
+            }
+        }
+        let home = std::env::var_os("USERPROFILE").map(PathBuf::from).filter(|p| p.is_dir());
+        let job = Job::new().ok_or(CodexError::Unavailable)?;
+        let mut command = Command::new(&self.executable);
+        command
+            .args(["app-server", "--listen", "stdio://"])
+            .env("PATH", path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        if let Some(home) = home {
+            command.current_dir(home);
+        }
+        let mut child = command.spawn().map_err(|_| CodexError::Unavailable)?;
+        if !job.adopt(&child) {
+            // Still suspended, or already in the job: either way nothing else runs.
+            let _ = child.kill();
+            drop(job);
+            let _ = child.wait();
+            return Err(CodexError::Unavailable);
+        }
+        let (Some(input), Some(output)) = (child.stdin.take(), child.stdout.take()) else {
+            drop(ProcessGroup { child: Some(child), job: Some(job) });
+            return Err(CodexError::Protocol);
+        };
+        Ok((input, Output::new(output), ProcessGroup { child: Some(child), job: Some(job) }))
     }
 }

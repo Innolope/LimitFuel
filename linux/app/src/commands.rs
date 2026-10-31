@@ -1,6 +1,7 @@
 //! What the settings window can ask for. No command ever returns a cookie.
 
 use crate::secrets::{self, BrowserKeys};
+use crate::autostart;
 use crate::settings::ClaudeSource;
 use crate::state::{Shared, lock, now};
 use crate::{telemetry, tray};
@@ -21,7 +22,7 @@ fn saved(app: &AppHandle, shared: &Shared) -> Result<(), String> {
 #[tauri::command]
 pub fn get_state(shared: SharedState<'_>) -> Value {
     let mut state = shared.snapshot();
-    state["autostart"] = json!(autostart_enabled());
+    state["autostart"] = json!(autostart::enabled());
     state
 }
 
@@ -39,15 +40,18 @@ pub async fn detect_browsers(app: AppHandle, shared: SharedState<'_>) -> Result<
     let worker = shared.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let shared = worker;
-        let Some(config) = dirs::config_dir() else { return json!({"found": 0, "errors": ["No config directory."]}) };
+        let browsers = secrets::browsers();
+        if browsers.is_empty() {
+            return json!({"found": 0, "errors": ["No config directory."]});
+        }
         let mut found = Vec::new();
         let mut errors = Vec::new();
-        for browser in cookies::browsers(&config) {
+        for browser in browsers {
             if !browser.root.exists() {
                 continue;
             }
-            let keys = BrowserKeys { application: browser.keyring_application };
-            match cookies::discover(&browser.root, None, true, now(), &keys) {
+            let keys = BrowserKeys::for_browser(&browser);
+            match cookies::discover_with(secrets::SCHEME, &browser.root, None, true, now(), &keys) {
                 Ok(sessions) => found.extend(sessions.into_iter().map(|s| (browser.name.to_string(), s))),
                 Err(error) => errors.push(format!("{}: {}", browser.name, error.message())),
             }
@@ -58,7 +62,11 @@ pub async fn detect_browsers(app: AppHandle, shared: SharedState<'_>) -> Result<
             let (browser, session) = lock(&shared.detected)[0].clone();
             connect_session(&shared, &browser, session);
         } else if count == 0 && errors.is_empty() {
-            errors.push("No signed-in Claude session found in Chrome, Chromium or Brave. Sign in to claude.ai, then detect again.".into());
+            errors.push(if cfg!(windows) {
+                "No signed-in Claude session found in Chrome, Edge, Brave or Chromium. Paste a cookie instead.".into()
+            } else {
+                "No signed-in Claude session found in Chrome, Chromium or Brave. Sign in to claude.ai, then detect again.".into()
+            });
         }
         json!({"found": count, "errors": errors})
     })
@@ -110,8 +118,13 @@ pub async fn save_cookie(app: AppHandle, shared: SharedState<'_>, header: String
         settings.profile_id = None;
     }
     *lock(&shared.cookie) = Some(header);
-    *lock(&shared.browser_message) = (!stored)
-        .then(|| "Saved for this session only: no unlocked keyring (Secret Service) is available.".to_string());
+    *lock(&shared.browser_message) = (!stored).then(|| {
+        if cfg!(windows) {
+            "Saved for this session only: Windows Credential Manager could not store it.".to_string()
+        } else {
+            "Saved for this session only: no unlocked keyring (Secret Service) is available.".to_string()
+        }
+    });
     shared.bump_revision();
     shared.wake_claude.notify();
     saved(&app, &shared)?;
@@ -138,7 +151,11 @@ pub fn disconnect_claude(app: AppHandle, shared: SharedState<'_>) -> Result<(), 
 pub fn set_codex_path(app: AppHandle, shared: SharedState<'_>, path: String) -> Result<(), String> {
     let path = path.trim();
     if !path.is_empty() && !Path::new(path).is_absolute() {
-        return Err("Use an absolute path, such as /usr/local/bin/codex.".into());
+        return Err(if cfg!(windows) {
+            r"Use an absolute path, such as C:\Users\you\AppData\Roaming\npm\codex.cmd.".into()
+        } else {
+            "Use an absolute path, such as /usr/local/bin/codex.".into()
+        });
     }
     lock(&shared.settings).codex_path = (!path.is_empty()).then(|| path.to_string());
     shared.wake_codex.notify();
@@ -163,7 +180,7 @@ pub fn set_preference(app: AppHandle, shared: SharedState<'_>, key: String, valu
         }
         ("autostart", Value::Bool(on)) => {
             drop(settings);
-            set_autostart(*on).map_err(|_| "Open at login could not be changed.".to_string())?;
+            autostart::set(*on).map_err(|_| "Open at login could not be changed.".to_string())?;
             tray::refresh(&app, &shared);
             return Ok(());
         }
@@ -179,51 +196,4 @@ pub fn detected_codex(shared: SharedState<'_>) -> Option<String> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     limitfuel_core::codex::resolve_executable(custom.as_deref(), std::env::var("PATH").ok().as_deref(), &home)
         .map(|p| p.display().to_string())
-}
-
-fn autostart_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("autostart/limitfuel.desktop"))
-}
-
-fn autostart_enabled() -> bool {
-    autostart_path().is_some_and(|p| p.exists())
-}
-
-/// Desktop Entry Exec quoting: wrap in quotes, escape `"`, `` ` ``, `$` and `\`.
-fn desktop_quote(path: &str) -> String {
-    let mut quoted = String::from('"');
-    for c in path.chars() {
-        if matches!(c, '"' | '`' | '$' | '\\') {
-            quoted.push('\\');
-        }
-        quoted.push(c);
-    }
-    quoted.push('"');
-    quoted
-}
-
-/// An AppImage runs from a temporary mount; login must start the AppImage file.
-fn set_autostart(enabled: bool) -> std::io::Result<()> {
-    let path = autostart_path().ok_or_else(|| std::io::Error::other("no config directory"))?;
-    if !enabled {
-        return match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        };
-    }
-    let executable = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-        .map_or_else(std::env::current_exe, Ok)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(
-        &path,
-        format!(
-            "[Desktop Entry]\nType=Application\nName=LimitFuel\nComment=Claude and Codex usage in the tray\n\
-             Exec={}\nIcon=limitfuel\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
-            desktop_quote(&executable.display().to_string())
-        ),
-    )
 }

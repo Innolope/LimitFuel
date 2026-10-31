@@ -136,7 +136,7 @@ impl From<CookieError> for Option<DiagnosticCode> {
         Some(match error {
             CookieError::Keyring => DiagnosticCode::SignIn,
             CookieError::Encryption | CookieError::InvalidCookie => DiagnosticCode::InvalidData,
-            CookieError::Unavailable | CookieError::Profile => DiagnosticCode::Unavailable,
+            CookieError::Unavailable | CookieError::Profile | CookieError::AppBound => DiagnosticCode::Unavailable,
             CookieError::Database => DiagnosticCode::ProtocolFailure,
         })
     }
