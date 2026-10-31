@@ -29,6 +29,9 @@ private final class FixtureProtocol: URLProtocol {
     static var requestCount: Int { lock.lock(); defer { lock.unlock() }; return started }
     static var unexpectedCount: Int { lock.lock(); defer { lock.unlock() }; return unexpected }
     static var completedRequestCount: Int { lock.lock(); defer { lock.unlock() }; return mainCompleted }
+    // A request cancelled before URLSession starts it never reaches startLoading,
+    // so a test that cancels a poll must first let all four of its requests start.
+    static var allRequestsStarted: Bool { lock.lock(); defer { lock.unlock() }; return allStarted == started * 4 }
     static var isQuiescent: Bool {
         lock.lock(); defer { lock.unlock() }
         return mainCompleted == started && allCompleted == allStarted && allStarted == started * 4 && pending.isEmpty
@@ -242,7 +245,9 @@ struct MenuRefreshStabilityTests {
         let heldBefore = FixtureProtocol.requestCount
         let oldDisplay = manager.menuBarDisplayOptions
         FixtureProtocol.enqueue(.init(body: usage(73), held: true)); manager.fetchUsage()
-        try wait("Claude held request starts") { FixtureProtocol.requestCount > heldBefore }
+        try wait("Claude held request starts") {
+            FixtureProtocol.requestCount > heldBefore && FixtureProtocol.allRequestsStarted
+        }
         for _ in 0..<12 { manager.fetchUsage() }
         drain()
         try expect(FixtureProtocol.requestCount == heldBefore + 1, "Claude duplicate fetches coalesce")
