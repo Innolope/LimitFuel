@@ -419,10 +419,11 @@ final class ClaudeAccounts: ObservableObject {
         }
     }
 
+    // Chrome keeps one claude.ai sign-in per profile. A pinned profile signed in to another
+    // Claude account holds a session no account uses, so it is offered like any other.
     private func offer(_ sessions: [ChromeSession], interactive: Bool) {
-        let pinned = Set(accounts.compactMap(\.chromeProfileID))
         var fresh: [ChromeSession] = []
-        for session in sessions where !pinned.contains(session.profile.id) && !isTracked(session.cookieHeader)
+        for session in sessions where !isTracked(session.cookieHeader)
             && !fresh.contains(where: { ClaudeSessionHeader.sameSession($0.cookieHeader, session.cookieHeader) }) {
             fresh.append(session)
         }
@@ -435,7 +436,7 @@ final class ClaudeAccounts: ObservableObject {
         } else if sessions.isEmpty {
             chromeMessage = "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
         } else if interactive {
-            chromeMessage = "Every signed-in Chrome profile is already added."
+            chromeMessage = "Every Claude account signed in to Chrome is already added. Chrome keeps one claude.ai sign-in per profile: sign in to another account in a different Chrome profile, or add a manual cookie."
         }
     }
 
@@ -462,7 +463,7 @@ final class ClaudeAccounts: ObservableObject {
         let profile = session.profile
         discovered.removeValue(forKey: profile.id)
         chromeChoices.removeAll { $0.id == profile.id }
-        guard !accounts.contains(where: { $0.chromeProfileID == profile.id }), !isTracked(session.cookieHeader) else { return }
+        guard !isTracked(session.cookieHeader) else { return }
         guard add(session.cookieHeader, chromeProfile: profile) else { return }
         chromeMessage = chromeChoices.isEmpty ? nil : "Added \(profile.name). Choose more profiles to add."
     }

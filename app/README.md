@@ -76,7 +76,11 @@ When you first launch LimitFuel, you'll see a welcome message. Follow these step
 
 Settings > Claude accounts lists every tracked account by its claude.ai email.
 **Add from Chrome** adds another signed-in Chrome profile, **Add Manual Cookie**
-adds an account from any browser, and the trash button removes one. Each account
+adds an account from any browser, and the trash button removes one. Chrome keeps
+one claude.ai sign-in per profile. Signing in to another account in a profile adds
+that account; the earlier one keeps its saved session but can no longer renew it from
+that profile. For accounts to keep renewing from Chrome, sign each in to its own Chrome
+profile. An account never takes over a session that belongs to another Claude user. Each account
 gets its own popup card, its own menu bar percentage (marked with a letter once
 there are two or more) and its own usage alerts. The same Claude account is never
 added twice.

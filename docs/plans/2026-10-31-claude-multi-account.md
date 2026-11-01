@@ -119,8 +119,10 @@ final class ClaudeAccounts: ObservableObject {
   Success appends a manual account (`chrome_sync` false), stores the cookie only
   in the credential store, starts its fetch and sets `claude_accounts_auto_add` false.
 - `detectChromeSessions` reads every Chrome profile (Keychain interaction only
-  when `interactive`). Profiles already pinned by an account, and sessions whose
-  `sessionKey` an account already uses, are not offered. With no accounts and
+  when `interactive`). Sessions whose `sessionKey` an account already uses are not
+  offered. A profile pinned by an account is offered again once it is signed in to
+  another Claude account (2026-11-01 correction: Chrome keeps one claude.ai sign-in
+  per profile, and the original rule hid that session). With no accounts and
   (`interactive` or auto-add allowed), or when `interactive`, exactly one new
   session is added directly. Several new sessions are published as
   `chromeChoices` and nothing is added. A background check with accounts present
@@ -135,6 +137,9 @@ final class ClaudeAccounts: ObservableObject {
   and auto-add is allowed.
 - Accounts are independent: one account's 401, timeout or Chrome failure never
   changes another account's usage, menu entry or alert history.
+- An account with a resolved Claude user takes a changed session from its profile
+  only after `GET /api/account` confirms the same user. Another user's session is
+  left for Add from Chrome, and the account keeps its own session and says so.
 
 ### D. Account identity
 

@@ -1102,10 +1102,16 @@ class UsageManager: ObservableObject {
                     self.chromeProfileName = session.profile.name
                     self.chromeProfiles = []
                     self.chromeMessage = "Connected to Chrome: \(session.profile.name). Rechecks hourly."
-                    if self.sessionCookie != session.cookieHeader {
+                    if self.sessionCookie == session.cookieHeader {
+                        if !self.hasFetchedData { self.fetchUsage() }
+                    } else if let owner = self.claudeAccountUUID, !self.sessionCookie.isEmpty,
+                              !ClaudeSessionHeader.sameSession(self.sessionCookie, session.cookieHeader) {
+                        // The profile was signed in again, maybe to another Claude account.
+                        self.adoptIfSameUser(session, owner: owner)
+                    } else {
                         self.replaceSessionCookie(session.cookieHeader)
                         self.fetchUsage()
-                    } else if !self.hasFetchedData { self.fetchUsage() }
+                    }
                 }
             }
         }
@@ -1252,21 +1258,43 @@ class UsageManager: ObservableObject {
 
     // MARK: Account identity
 
-    /// Asks claude.ai who this session belongs to, once per session identity per run.
-    func fetchIdentityIfNeeded() {
-        let identity = ClaudeSessionHeader.identity(sessionCookie)
-        guard !removed, !sessionCookie.isEmpty, identityRequestedFor != identity,
-              let url = URL(string: "https://claude.ai/api/account") else { return }
-        identityRequestedFor = identity
+    private func accountRequest(cookie: String) -> URLRequest? {
+        guard let url = URL(string: "https://claude.ai/api/account") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(sessionCookie, forHTTPHeaderField: "Cookie")
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://claude.ai", forHTTPHeaderField: "Origin")
         request.setValue("https://claude.ai", forHTTPHeaderField: "Referer")
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
+        return request
+    }
+
+    /// Takes the profile's new session only when it is this Claude user's. Another user's
+    /// session stays in Chrome for Add from Chrome; this account keeps its own.
+    private func adoptIfSameUser(_ session: ChromeSession, owner: String) {
+        guard let request = accountRequest(cookie: session.cookieHeader) else { return }
+        performRequest(request, identity: true) { [weak self] data, response, _ in
+            guard let self = self, !self.removed, (response as? HTTPURLResponse)?.statusCode == 200,
+                  let data = data, let resolved = ClaudeAccountIdentity.parse(data, organizationID: nil) else { return }
+            guard UUID(uuidString: resolved.accountUUID) == UUID(uuidString: owner) else {
+                self.chromeNeedsAttention = true
+                self.chromeMessage = "Chrome profile \(session.profile.name) is now signed in to a different Claude account. This account keeps its saved session; add the other one with Add from Chrome."
+                return
+            }
+            self.replaceSessionCookie(session.cookieHeader)
+            self.fetchUsage()
+        }
+    }
+
+    /// Asks claude.ai who this session belongs to, once per session identity per run.
+    func fetchIdentityIfNeeded() {
+        let identity = ClaudeSessionHeader.identity(sessionCookie)
+        guard !removed, !sessionCookie.isEmpty, identityRequestedFor != identity,
+              let request = accountRequest(cookie: sessionCookie) else { return }
+        identityRequestedFor = identity
         let organization = organizationID
         performRequest(request, identity: true) { [weak self] data, response, _ in
             guard let self = self, !self.removed,
