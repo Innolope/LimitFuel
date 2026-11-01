@@ -64,11 +64,14 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         app.statusItem = NSStatusBar.system.statusItem(withLength:120)
         app.statusItem.button!.title = "TEST LimitFuel"
         defer { app.closePopover(); NSStatusBar.system.removeStatusItem(app.statusItem) }
-        app.usageManager = UsageManager(statusItem:nil,delegate:app,defaults:defaults,chromeReader:reader,apiSession:URLSession(configuration:config))
-        app.usageManager.hasFetchedData = true
-        app.usageManager.sessionUsage = 92
-        app.usageManager.sessionUtilization = 92
-        app.usageManager.weeklyUsage = 34
+        // One tracked Claude account (2026-10-31 spec correction: accounts replace the single manager).
+        defaults.set(["primary"],forKey:"claude_account_ids")
+        app.claudeAccounts = ClaudeAccounts(defaults:defaults,chromeReader:reader,apiSession:URLSession(configuration:config),delegate:app)
+        let claude = app.claudeAccounts.accounts[0]
+        claude.hasFetchedData = true
+        claude.sessionUsage = 92
+        claude.sessionUtilization = 92
+        claude.weeklyUsage = 34
         app.menuBarPreferences = MenuBarPreferences(defaults:defaults)
         app.menuBarPreferences.setPercentageMode(.used)
         app.menuBarPreferences.onChange = { [weak app] in app?.updateSelectedProviderIcon() }
@@ -76,7 +79,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         app.updateManager = UpdateManager()
         app.codexManager = CodexUsageManager(fetcher:{ fatalError("No provider calls") },notificationsEnabled:{false},notify:{ _,_ in fatalError("No notifications") })
         app.codexManager.snapshot = snapshot(4)
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34},"seven_day_sonnet":{"utilization":56},"limits":[{"percent":78,"scope":{"model":{"display_name":"Fable"}}}]}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34},"seven_day_sonnet":{"utilization":56},"limits":[{"percent":78,"scope":{"model":{"display_name":"Fable"}}}]}"#.utf8))
         // Frozen before selection implementation: provider availability must use
         // a valid window even when the preferred bucket/window is unavailable.
         let valid42 = CodexWindow(usedPercent:42,windowDurationMins:300,resetsAt:nil)
@@ -98,7 +101,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
             ([CodexBucket(id:"codex",name:"secondary fallback",primary:invalid101,secondary:valid42)],42),
             ([CodexBucket(id:"other",name:"other",primary:realZero,secondary:nil),CodexBucket(id:"codex",name:"preferred",primary:valid42,secondary:realZero)],42)
         ]
-        app.usageManager.hasFetchedData = false
+        claude.hasFetchedData = false
         for (buckets,expected) in selectionCases {
             app.codexManager.snapshot = CodexSnapshot(accountLabel:"OFFLINE LAYOUT TEST",buckets:buckets)
             app.updateSelectedProviderIcon()
@@ -107,7 +110,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
             demand(label.contains("Codex") && label.contains("\(expected)%"),"Valid connected Codex window hidden by unavailable bucket/window")
             demand(!(label.contains("connect")),"Connected Codex must not show disconnected label")
         }
-        app.usageManager.hasFetchedData = true
+        claude.hasFetchedData = true
         app.codexManager.snapshot = snapshot(4)
         // Actual delegate rendering and post-mutation preference callback.
         func menu(_ claude:Int?,_ codex:Int?) {
@@ -121,7 +124,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         }
         app.codexManager.snapshot = CodexSnapshot(accountLabel:"OFFLINE LAYOUT TEST",buckets:[CodexBucket(id:"codex",name:"Codex",primary:CodexWindow(usedPercent:33,windowDurationMins:300,resetsAt:nil),secondary:CodexWindow(usedPercent:55,windowDurationMins:10080,resetsAt:nil))])
         app.updateSelectedProviderIcon();menu(12,33)
-        let cw = app.usageManager.menuBarOptions.first{$0.durationMinutes == 10080 && $0.percent == 34}!.id
+        let cw = claude.menuBarOptions.first{$0.durationMinutes == 10080 && $0.percent == 34}!.id
         let ow = app.codexManager.snapshot!.menuBarOptions.first{$0.durationMinutes == 10080}!.id
         app.menuBarPreferences.select(cw,for:.claude);menu(34,33)
         app.menuBarPreferences.select(ow,for:.codex);menu(34,55)
@@ -130,24 +133,24 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         demand(app.menuBarPreferences.selectionID(for:.codex) == ow,"Missing selection was destroyed")
         app.codexManager.snapshot = CodexSnapshot(accountLabel:"OFFLINE LAYOUT TEST",buckets:[CodexBucket(id:"codex",name:"renamed",primary:nil,secondary:CodexWindow(usedPercent:0,windowDurationMins:10080,resetsAt:nil))])
         app.updateSelectedProviderIcon();menu(34,0)
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":9}}"#.utf8));menu(9,0)
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":9}}"#.utf8));menu(9,0)
         demand(app.menuBarPreferences.selectionID(for:.claude) == cw,"Missing Claude selection was destroyed")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":7},"seven_day":{"utilization":0}}"#.utf8));menu(0,0)
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":7},"seven_day":{"utilization":0}}"#.utf8));menu(0,0)
         // Newly approved last-known retention supersedes the earlier policy that
         // invalid data clears the display; raw current options still clear below.
-        app.usageManager.parseUsageData(Data("invalid".utf8));menu(0,0)
+        claude.parseUsageData(Data("invalid".utf8));menu(0,0)
         let retainedTooltip = app.statusItem.button!.toolTip ?? ""
         let claudeStart = retainedTooltip.range(of:"Claude")!.lowerBound
         let claudeEnd = retainedTooltip.range(of:"Codex")?.lowerBound ?? retainedTooltip.endIndex
         let retainedClaudeTooltip = String(retainedTooltip[claudeStart..<claudeEnd]).lowercased()
         demand(retainedClaudeTooltip.contains("last known") || retainedClaudeTooltip.contains("last-known"),"Retained Claude tooltip must identify last-known data")
-        demand(app.usageManager.menuBarOptions.isEmpty,"Invalid Claude JSON retained account options")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":7}}"#.utf8));menu(7,0)
-        app.usageManager.clearSessionCookie();menu(nil,0)
-        demand(app.usageManager.menuBarOptions.isEmpty,"Disconnect retained account options")
+        demand(claude.menuBarOptions.isEmpty,"Invalid Claude JSON retained account options")
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":7}}"#.utf8));menu(7,0)
+        claude.clearSessionCookie();menu(nil,0)
+        demand(claude.menuBarOptions.isEmpty,"Disconnect retained account options")
         app.menuBarPreferences.select(MenuBarSelection.automaticID,for:.claude)
         app.menuBarPreferences.select(MenuBarSelection.automaticID,for:.codex)
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":34}}"#.utf8))
         app.codexManager.snapshot = snapshot(4)
         app.popover = NSPopover()
         app.popover.animates = false
@@ -155,7 +158,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         app.popover.delegate = app
         app.popover.contentSize = NSSize(width:360,height:app.popupPresentation.viewportHeight)
         app.popupPresentation.onResize = { height in app.popover.contentSize = NSSize(width:360,height:height) }
-        let host = NSHostingController(rootView:UsageView(usageManager:app.usageManager,statusManager:app.statusManager,updateManager:app.updateManager,codexManager:app.codexManager,popupPresentation:app.popupPresentation,menuBarPreferences:app.menuBarPreferences).defaultAppStorage(defaults))
+        let host = NSHostingController(rootView:UsageView(claude:app.claudeAccounts,settings:AppSettings(defaults:defaults),statusManager:app.statusManager,updateManager:app.updateManager,codexManager:app.codexManager,popupPresentation:app.popupPresentation,menuBarPreferences:app.menuBarPreferences).defaultAppStorage(defaults))
         app.popover.contentViewController = host
         spin()
         var nativeBoundsFailures: [String] = []
@@ -218,7 +221,7 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
         func pickerControls(_ view:NSView)->[NSPopUpButton] {
             (view as? NSPopUpButton).map{[$0]} ?? view.subviews.flatMap(pickerControls)
         }
-        let claudeLabels = app.usageManager.menuBarDisplayOptions.map(\.label)
+        let claudeLabels = claude.menuBarDisplayOptions.map(\.label)
         let codexLabels = app.codexManager.menuBarDisplayOptions.map(\.label)
         let providerPickers = pickerControls(host.view).filter { $0.itemTitles == claudeLabels || $0.itemTitles == codexLabels }
         print("native-provider-pickers=\(providerPickers.map{$0.itemTitles})")

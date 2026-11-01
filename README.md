@@ -21,7 +21,8 @@ Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/Claude
 2. Launch the app; it picks up your Chrome session automatically.
 3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks.
-4. If several Chrome profiles are signed in, choose one.
+4. If several Chrome profiles are signed in, choose which ones to add. Add more
+   Claude accounts any time in Settings, from Chrome or with a manual cookie.
 5. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
    ChatGPT if needed); its limits appear below Claude's. See [Codex setup](#codex-setup).
 
@@ -39,7 +40,8 @@ option remains for other browsers.
 - ⌨️ **Keyboard shortcut** - Toggle popup with Cmd+U from anywhere
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
-- 🔒 **Privacy-first** - Local credentials and read-only provider access, with a Settings opt-out for diagnostics
+- 👥 **Several Claude accounts** - Each account shows its email in the popup and its own percentage in the menu bar
+- 🔒 **Privacy-first** - Session cookies in your macOS Keychain and read-only provider access, with a Settings opt-out for diagnostics
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
 - 🩺 **Crash and error reporting** - Sentry reporting is on by default, with an off switch in Settings; see [diagnostics and privacy](docs/diagnostics.md)
 - 🎯 **Menu bar only** - No Dock icon, stays out of your way

@@ -47,6 +47,7 @@ python3 "$REPO/Tests/BoundedCommandTests.py"
   -emit-module-path "$BUILD/LimitFuelAcceptance.swiftmodule" -lsqlite3 \
   -Xlinker -install_name -Xlinker @rpath/libLimitFuelAcceptance.dylib \
   "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" \
+  "$REPO/app/ClaudeAccounts.swift" \
   "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" \
   "$REPO/app/PopupLayout.swift" "$REPO/app/MenuBarPreferences.swift" \
   -o "$BUILD/libLimitFuelAcceptance.dylib"
@@ -69,6 +70,9 @@ CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/acceptance-tests"
 
 compile_acceptance "UsageManagerTests" "lifecycle-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/lifecycle-tests"
+# Claude accounts, Keychain storage and identity (spec-first, 2026-10-31).
+compile_acceptance "ClaudeAccountsTests" "claude-accounts-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-accounts-tests"
 compile_acceptance "MenuBarStatusTests" "menubar-tests"
 "$BUILD/menubar-tests"
 

@@ -90,20 +90,23 @@ struct ClaudeNativePresentationAcceptance {
         app.statusItem = NSStatusBar.system.statusItem(withLength: 140)
         app.statusItem.button!.title = "TEST Claude UI"
         // Deliberately do not install this delegate or invoke its launch hooks.
-        app.usageManager = UsageManager(statusItem: nil, delegate: app, defaults: defaults, chromeReader: reader, apiSession: session)
+        // One tracked Claude account (2026-10-31 spec correction: accounts replace the single manager).
+        defaults.set(["primary"], forKey: "claude_account_ids")
+        app.claudeAccounts = ClaudeAccounts(defaults: defaults, chromeReader: reader, apiSession: session, delegate: app)
+        let claude = app.claudeAccounts.accounts[0]
         app.statusManager = StatusManager()
         app.updateManager = UpdateManager()
         app.menuBarPreferences = MenuBarPreferences(defaults: defaults)
         app.codexManager = CodexUsageManager(fetcher: { fatalError("No provider calls") }, notificationsEnabled: { false }, notify: { _, _ in fatalError("No notifications") })
         app.codexManager.snapshot = CodexSnapshot(accountLabel: "OFFLINE CLAUDE TEST", buckets: [])
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12}}"#.utf8))
         app.popover = NSPopover()
         app.popover.animates = false
         app.popover.behavior = .transient
         app.popover.delegate = app
         app.popover.contentSize = NSSize(width: 360, height: app.popupPresentation.viewportHeight)
         app.popupPresentation.onResize = { height in app.popover.contentSize = NSSize(width: 360, height: height) }
-        let host = NSHostingController(rootView: UsageView(usageManager: app.usageManager, statusManager: app.statusManager, updateManager: app.updateManager, codexManager: app.codexManager, popupPresentation: app.popupPresentation, menuBarPreferences: app.menuBarPreferences).defaultAppStorage(defaults))
+        let host = NSHostingController(rootView: UsageView(claude: app.claudeAccounts, settings: AppSettings(defaults: defaults), statusManager: app.statusManager, updateManager: app.updateManager, codexManager: app.codexManager, popupPresentation: app.popupPresentation, menuBarPreferences: app.menuBarPreferences).defaultAppStorage(defaults))
         app.popover.contentViewController = host
         defer {
             app.closePopover()
@@ -145,38 +148,39 @@ struct ClaudeNativePresentationAcceptance {
             }
             fatalError("Unterminated source declaration: \(name)")
         }
-        let cardSource = declaration("private var claudeCard: some View")
-        require(cardSource.contains("if usageManager.showsClaudeConnectionControls {\n                chromeConnectionControls"), "Actual dashboard must guard Chrome controls with connection predicate")
-        require(cardSource.contains("if usageManager.showsClaudeWeeklyUsage {"), "Actual weekly row must use the accepted presentation predicate")
-        require(declaration("private var settingsPage: some View").contains("chromeSession"), "Settings must include account connection view")
-        require(declaration("private var chromeSession: some View").contains("chromeConnectionControls"), "Settings account view must retain Chrome controls")
-        require(declaration("private var chromeConnectionControls: some View").contains("chromeButtons"), "Shared connection controls must include Chrome actions")
-        require(declaration("private var chromeButtons: some View").contains("Open Claude in Chrome"), "Chrome actions must contain the open action")
+        let cardSource = declaration("private func claudeCard(_ account: UsageManager) -> some View")
+        require(cardSource.contains("if account.showsClaudeConnectionControls {") && cardSource.contains("chromeConnectionControls(account)"), "Actual dashboard must guard Chrome controls with connection predicate")
+        require(cardSource.contains("if account.showsClaudeWeeklyUsage {"), "Actual weekly row must use the accepted presentation predicate")
+        require(declaration("private var settingsPage: some View").contains("claudeAccountsSettings"), "Settings must include account connection view")
+        require(declaration("private var claudeAccountsSettings: some View").contains("claudeAccountRow"), "Settings must list each account")
+        require(declaration("private func claudeAccountRow(_ account: UsageManager) -> some View").contains("chromeConnectionControls(account)"), "Settings account view must retain Chrome controls")
+        require(declaration("private func chromeConnectionControls(_ account: UsageManager) -> some View").contains("chromeButtons(account)"), "Shared connection controls must include Chrome actions")
+        require(declaration("private func chromeButtons(_ account: UsageManager) -> some View").contains("Open Claude in Chrome"), "Chrome actions must contain the open action")
         let normal = state("connected-weekly-absent")
         for (attention, detecting) in [(true, false), (false, true), (true, true)] {
-            app.usageManager.chromeNeedsAttention = attention
-            app.usageManager.isDetectingChrome = detecting
-            app.usageManager.chromeMessage = attention ? "OFFLINE TEST Keychain permission denied" : nil
+            claude.chromeNeedsAttention = attention
+            claude.isDetectingChrome = detecting
+            claude.chromeMessage = attention ? "OFFLINE TEST Keychain permission denied" : nil
             let changed = state("connected-attention-\(attention)-detecting-\(detecting)")
             require(chromeButtons(changed.0).isEmpty, "Connected dashboard exposes Chrome connection buttons")
             require(abs(changed.1 - normal.1) < 1, "Connected dashboard Chrome attention/detection added content")
         }
-        app.usageManager.chromeNeedsAttention = false
-        app.usageManager.isDetectingChrome = false
-        app.usageManager.chromeMessage = nil
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0}}"#.utf8))
+        claude.chromeNeedsAttention = false
+        claude.isDetectingChrome = false
+        claude.chromeMessage = nil
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0}}"#.utf8))
         let positiveSessionZeroWeekly = state("connected-positive-session-weekly-zero")
         require(abs(positiveSessionZeroWeekly.1 - normal.1) < 1, "Positive session with weekly zero must hide Weekly")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":0},"seven_day":{"utilization":0}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":0},"seven_day":{"utilization":0}}"#.utf8))
         let realZero = state("connected-weekly-zero")
         require(realZero.1 > normal.1 + 1, "Session zero and weekly zero must show both dashboard rows")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0}}"#.utf8))
         let hiddenAgain = state("connected-positive-session-weekly-zero-again")
         require(abs(hiddenAgain.1 - normal.1) < 1, "Weekly zero must hide again after session activity")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0.1}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12},"seven_day":{"utilization":0.1}}"#.utf8))
         let fractionalWeekly = state("connected-fractional-weekly")
         require(fractionalWeekly.1 > normal.1 + 1, "Positive fractional weekly must show before display rounding")
-        app.usageManager.parseUsageData(Data(#"{"five_hour":{"utilization":12}}"#.utf8))
+        claude.parseUsageData(Data(#"{"five_hour":{"utilization":12}}"#.utf8))
         let missingAgain = state("connected-weekly-missing-again")
         require(abs(missingAgain.1 - normal.1) < 1, "Missing weekly usage retained a dashboard row")
         require(chromeButtons(missingAgain.0).isEmpty, "Connected dashboard retains Chrome buttons")
@@ -204,7 +208,7 @@ struct ClaudeNativePresentationAcceptance {
             print("LIMITATION: SwiftUI Chrome button AX inventory unavailable; Settings controls verified by immutable source use-sites and native Settings navigation")
         }
         header("Back", x: 28)
-        app.usageManager.clearSessionCookie()
+        claude.clearSessionCookie()
         let disconnected = state("disconnected")
         require(disconnected.1 > normal.1 + 1, "Disconnected dashboard did not render recovery content")
         if chromeButtons(disconnected.0).isEmpty {

@@ -62,9 +62,27 @@ enum ChromeCookieError: LocalizedError {
     }
 }
 
+enum KeychainInteraction {
+    private static let lock = NSLock()
+
+    /// The file-based keychain's prompt flag is process-global, so every caller that
+    /// changes it shares one lock. LAContext alone cannot suppress its UI
+    /// (Chromium FB16959400 workaround).
+    static func perform<T>(allowInteraction: Bool, _ body: () throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        var previousInteraction: DarwinBoolean = true
+        guard SecKeychainGetUserInteractionAllowed(&previousInteraction) == errSecSuccess,
+              SecKeychainSetUserInteractionAllowed(allowInteraction) == errSecSuccess else {
+            throw ChromeCookieError.keychain
+        }
+        defer { _ = SecKeychainSetUserInteractionAllowed(previousInteraction.boolValue) }
+        return try body()
+    }
+}
+
 /// Reads only Claude's cookies. No shell commands, browser scripting or writes to Chrome.
 struct ChromeCookieReader {
-    private static let keychainLock = NSLock()
     let root: URL
     let passwordProvider: (Bool) throws -> Data
 
@@ -76,32 +94,25 @@ struct ChromeCookieReader {
     }
 
     static func chromePassword(allowInteraction: Bool) throws -> Data {
-        // Chrome uses the file-based keychain, whose prompt flag is process-global.
-        // LAContext alone cannot suppress its UI (Chromium FB16959400 workaround).
-        keychainLock.lock()
-        defer { keychainLock.unlock() }
-        var previousInteraction: DarwinBoolean = true
-        guard SecKeychainGetUserInteractionAllowed(&previousInteraction) == errSecSuccess,
-              SecKeychainSetUserInteractionAllowed(allowInteraction) == errSecSuccess else {
-            throw ChromeCookieError.keychain
+        // Chrome uses the file-based keychain.
+        try KeychainInteraction.perform(allowInteraction: allowInteraction) {
+            let context = LAContext()
+            context.interactionNotAllowed = !allowInteraction
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: "Chrome Safe Storage",
+                kSecAttrAccount as String: "Chrome",
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+                kSecUseAuthenticationContext as String: context
+            ]
+            var item: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+                  let password = item as? Data, !password.isEmpty else {
+                throw ChromeCookieError.keychain
+            }
+            return password
         }
-        defer { _ = SecKeychainSetUserInteractionAllowed(previousInteraction.boolValue) }
-        let context = LAContext()
-        context.interactionNotAllowed = !allowInteraction
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Chrome Safe Storage",
-            kSecAttrAccount as String: "Chrome",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let password = item as? Data, !password.isEmpty else {
-            throw ChromeCookieError.keychain
-        }
-        return password
     }
 
     func discover(profileID: String? = nil, allowInteraction: Bool = false,
