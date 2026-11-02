@@ -82,11 +82,14 @@ complete before the call returns.
 - One window at a time; a second request brings it forward. Fresh `WKWebsiteDataStore.nonPersistent()`
   per window, so nothing is written to disk and every window starts signed out.
 - Loads `https://claude.ai/login`. Default WebKit user agent (no browser spoofing).
-- Watches the cookie store. Once `ClaudeSignInCookies.header` returns a header that has
+- Checks the cookie store every second and after each page load. An in-memory store never reports
+  cookies set by a fetch response, and claude.ai sets `sessionKey` in one, so a cookie observer
+  alone never sees the sign-in. Once `ClaudeSignInCookies.header` returns a header that has
   `lastActiveOrg`, or 5 s after the first header without it, calls `completeSignIn` once.
   Success closes the window; `.failed` shows the message with Try Again (same header).
 - "Paste Login Link" loads an `https://claude.ai/...` link from the clipboard in the same web
   view, so an emailed magic link completes here. Any other URL is refused with a message.
+- Opens at 480×700, never taller than the screen; minimum 400×480.
 - Popups (`window.open`) load in the same web view. Edit shortcuts (⌘X/C/V/A/Z) work.
 - Entry points: Settings → Claude accounts "Sign In…"; first-run Claude card "Sign In to Claude";
   an account that needs sign-in shows "Sign In Again" (signed-in-here) or "Sign In Here" (Chrome).
@@ -109,6 +112,8 @@ complete before the call returns.
 | 12 | Signed-in session expires (~28 days) or is revoked | 401 sets `needsSignIn`; card and settings row show Sign In Again. |
 | 13 | User closes the window mid-sign-in | Web view and its cookies are discarded; nothing stored. |
 | 14 | Chrome hourly refresh | Skips signed-in-here accounts. |
+| 15 | Session cookie set by a fetch response raises no cookie notice in an in-memory store | Cookies checked every second. |
+| 16 | Window measured narrower than its footer text grows taller than the screen | Minimum width set on the SwiftUI root; height capped to the screen. |
 
 ## Not handled
 
@@ -127,3 +132,15 @@ complete before the call returns.
 - The real window, opened by a harness against an in-memory store, loads `https://claude.ai/login`
   ("Sign in - Claude", email field present) in a non-persistent data store; a second open reuses
   the window and closing it releases it. No real sign-in was made.
+
+## Fixes after the first real sign-in (2026-11-02)
+
+- The first real sign-in completed in the web view but LimitFuel saved nothing: the window
+  relied on a cookie observer, which never fires in an in-memory store for cookies from a fetch
+  response (a probe showed it fires there only for `document.cookie`; the default store fires for
+  both). The window now checks its cookies every second.
+- The window opened 2,095 pt tall on a 784 pt screen, hiding the footer and its messages: the
+  hosting view derived a 62 × 2,063 pt minimum from the footer measured at its narrowest.
+- `ClaudeNativePresentationTests` opens the real window offline, checks it fits the screen, stores a
+  session after the page has loaded and requires the account to be added and the window to close.
+  Removing the timer or the minimum frame fails it.

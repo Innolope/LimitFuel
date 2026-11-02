@@ -6,17 +6,24 @@ import WebKit
 /// starts signed out, never sees Chrome's or another account's sign-in, and leaves nothing
 /// on disk: the captured session goes to the Keychain through `ClaudeAccounts`.
 final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDelegate,
-                                          WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
+                                          WKNavigationDelegate, WKUIDelegate {
     enum Phase: Equatable {
         case signingIn
         case saving
         case failed(String)
     }
 
-    private static var current: ClaudeSignInWindowController?
+    private(set) static var current: ClaudeSignInWindowController?
+    #if ACCEPTANCE_TESTS
+    static var loginURL = URL(string: "https://claude.ai/login")!
+    #else
     private static let loginURL = URL(string: "https://claude.ai/login")!
+    #endif
     // claude.ai sets lastActiveOrg right after sessionKey; usage can find the org without it.
     private static let organizationGrace: TimeInterval = 5
+    // An in-memory cookie store never reports cookies set by a fetch response, and claude.ai
+    // finishes signing in with one, so the window checks its cookies on a timer.
+    private static let cookieCheckInterval: TimeInterval = 1
 
     /// Opens the sign-in window, or brings the open one forward.
     static func show(accounts: ClaudeAccounts, expectedEmail: String? = nil) {
@@ -39,6 +46,7 @@ final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDe
     private var popups: [NSWindow] = []
     private var capturedHeader: String?
     private var organizationWait: DispatchWorkItem?
+    private var cookieCheck: Timer?
     private var finished = false
 
     private init(accounts: ClaudeAccounts, expectedEmail: String?) {
@@ -50,24 +58,28 @@ final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDe
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        cookieStore.add(self)
     }
 
     private var cookieStore: WKHTTPCookieStore { webView.configuration.websiteDataStore.httpCookieStore }
 
     private func present() {
-        let window = EditingWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 700),
+        let height = min(700, (NSScreen.main?.visibleFrame.height ?? 760) - 60)
+        let window = EditingWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: height),
                                    styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                    backing: .buffered, defer: false)
         window.title = "Sign in to Claude"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 400, height: 520)
         window.delegate = self
         window.contentView = NSHostingView(rootView: ClaudeSignInView(controller: self))
         window.center()
         self.window = window
         window.makeKeyAndOrderFront(nil)
         webView.load(URLRequest(url: Self.loginURL))
+        let timer = Timer(timeInterval: Self.cookieCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkCookies()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cookieCheck = timer
     }
 
     // MARK: Actions
@@ -113,7 +125,8 @@ final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDe
 
     // MARK: Session capture
 
-    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+    private func checkCookies() {
+        guard !finished, phase == .signingIn else { return }
         cookieStore.getAllCookies { [weak self] cookies in
             DispatchQueue.main.async { self?.consider(cookies) }
         }
@@ -157,9 +170,7 @@ final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDe
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        cookieStore.getAllCookies { [weak self] cookies in
-            DispatchQueue.main.async { self?.consider(cookies) }
-        }
+        checkCookies()
     }
 
     // Sign-in providers open popups that report back to the page through window.opener.
@@ -194,7 +205,8 @@ final class ClaudeSignInWindowController: NSObject, ObservableObject, NSWindowDe
     func windowWillClose(_ notification: Notification) {
         organizationWait?.cancel()
         organizationWait = nil
-        cookieStore.remove(self)
+        cookieCheck?.invalidate()
+        cookieCheck = nil
         webView.stopLoading()
         popups.forEach { $0.close() }
         popups = []
@@ -239,6 +251,9 @@ private struct ClaudeSignInView: View {
             footer
                 .padding(12)
         }
+        // The hosting view takes the window's minimum size from this frame. Without a minimum
+        // width SwiftUI measures the footer a few points wide, and the window outgrows the screen.
+        .frame(minWidth: 400, minHeight: 480)
     }
 
     private var hint: String {

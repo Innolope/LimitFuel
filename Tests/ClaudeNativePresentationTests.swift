@@ -13,6 +13,59 @@ private final class ClaudeNativeDenyNetwork: URLProtocol {
     override func startLoading() { fatalError("Native Claude acceptance attempted network") }
     override func stopLoading() {}
 }
+// Answers the sign-in window's account lookup offline; every other request fails.
+private final class ClaudeSignInOffline: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard request.url?.absoluteString == "https://claude.ai/api/account" else {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
+        let body = Data(#"{"email_address":"signin-window@example.com","uuid":"5B1A7C3E-0D42-4F7B-9C11-2E8F6A4D9B01"}"#.utf8)
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+private func verifySignInWindow(reader: ChromeCookieReader) {
+    let suite = "LimitFuel.ClaudeNativeVerifier.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    for key in ["chrome_detection_enabled", "usage_notifications_enabled", "status_notifications_enabled"] { defaults.set(false, forKey: key) }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [ClaudeSignInOffline.self]
+    let session = URLSession(configuration: config)
+    defer {
+        session.invalidateAndCancel()
+        defaults.removePersistentDomain(forName: suite)
+    }
+    let accounts = ClaudeAccounts(defaults: defaults, credentials: InMemoryCredentialStore(), chromeReader: reader, apiSession: session)
+    ClaudeSignInWindowController.loginURL = URL(string: "about:blank")!
+    ClaudeSignInWindowController.show(accounts: accounts)
+    settle(0.6)
+    guard let controller = ClaudeSignInWindowController.current,
+          let window = NSApp.windows.first(where: { $0.title == "Sign in to Claude" && $0.isVisible }),
+          let screen = window.screen else { fatalError("Sign-in window did not open") }
+    print("CLAUDE-NATIVE sign-in window frame=\(window.frame) minimum=\(window.contentMinSize) screen=\(screen.visibleFrame)")
+    require(window.frame.height <= screen.visibleFrame.height, "Sign-in window is taller than the screen")
+    require(window.contentMinSize.height <= 600, "Sign-in window minimum height must fit a laptop screen")
+    // claude.ai sets its session in a fetch response, which an in-memory store never reports;
+    // cookies stored after the page finished loading must still be found.
+    let store = controller.webView.configuration.websiteDataStore.httpCookieStore
+    for (name, value) in [("sessionKey", "sk-ant-sid01-offline-test"), ("lastActiveOrg", "6F1D2C4B-8A3E-4B7D-9E21-0C5A7B3D2E10")] {
+        var stored = false
+        store.setCookie(HTTPCookie(properties: [.domain: ".claude.ai", .path: "/", .name: name, .value: value, .secure: "TRUE"])!) { stored = true }
+        while !stored { settle(0.05) }
+    }
+    let deadline = Date().addingTimeInterval(5)
+    while ClaudeSignInWindowController.current != nil && Date() < deadline { settle(0.1) }
+    require(ClaudeSignInWindowController.current == nil && !window.isVisible, "Sign-in window did not save the session and close")
+    require(accounts.accounts.count == 1 && accounts.accounts[0].email == "signin-window@example.com" && accounts.accounts[0].signedInHere,
+            "Signed-in session was not added as an account")
+}
 private func nativeScrolls(_ view: NSView) -> [NSScrollView] {
     (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrolls)
 }
@@ -216,6 +269,7 @@ struct ClaudeNativePresentationAcceptance {
         if chromeButtons(disconnected.0).isEmpty {
             print("LIMITATION: SwiftUI Chrome button AX inventory unavailable; disconnected recovery verified by source use-site and native document expansion")
         }
+        verifySignInWindow(reader: reader)
         print("Native Claude presentation acceptance passed")
     }
 }
