@@ -214,7 +214,10 @@ func press(_ object: Any, help: String, depth: Int = 0) -> Bool {
                     window.sendEvent(event)
                 }
             }
-            spin(0.8)
+            // The page animates in; under load it can take longer than its 0.25 s animation.
+            let deadline = Date().addingTimeInterval(5)
+            repeat { spin(0.1) } while abs(scroll.documentView!.frame.height-oldHeight)<=1 && Date()<deadline
+            spin(0.3)
             demand(abs(scroll.documentView!.frame.height-oldHeight)>1,"Real header button did not change page")
         }
         activateHeader("Settings",x:332);state("settings",top:true)
