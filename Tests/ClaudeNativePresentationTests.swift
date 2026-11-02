@@ -255,7 +255,11 @@ struct ClaudeNativePresentationAcceptance {
         let controls = declaration("private func connectionControls(_ account: UsageManager) -> some View")
         require(controls.contains("if account.signedInHere {") && controls.contains("Sign In Again") && controls.contains("chromeConnectionControls(account)"), "Signed-in accounts renew by signing in; the others keep Chrome controls")
         require(declaration("private func chromeConnectionControls(_ account: UsageManager) -> some View").contains("chromeButtons(account)"), "Shared connection controls must include Chrome actions")
-        require(declaration("private func chromeButtons(_ account: UsageManager) -> some View").contains("Sign In Here"), "Chrome actions must offer signing in here")
+        let chromeActions = declaration("private func chromeButtons(_ account: UsageManager) -> some View")
+        require(chromeActions.contains("signInHereButton(account)") && chromeActions.contains("detectChromeButton(account)")
+                && declaration("private func signInHereButton(_ account: UsageManager) -> some View").contains("Sign In Here"),
+                "Chrome actions must offer signing in here")
+        require(chromeActions.contains("if account.needsSignIn {"), "A signed-out account leads with signing in")
         let dashboardSource = declaration("private var dashboard: some View")
         require(dashboardSource.contains("GlassMenuButton(symbol: \"plus\"") && ["Sign In to Claude…", "Add from Chrome", "Manual Cookie…"].allSatisfy(dashboardSource.contains),
                 "Popup header must offer every way to add a Claude account")

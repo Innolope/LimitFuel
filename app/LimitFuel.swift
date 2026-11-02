@@ -304,6 +304,49 @@ struct GlassIconButton: View {
     }
 }
 
+/// What a Claude card says when usage can't load: a short headline naming the cause, shown in
+/// bold, and a plain line on what happens next. Never a bare status code or parser error.
+enum ClaudeUsageProblem {
+    static let signedOut = "Signed out of claude.ai"
+    static let unreachable = "Can't reach claude.ai"
+    static let unreadable = "Usage couldn't be read"
+    static let noOrganization = "Claude organization not found"
+    static let noSession = "No saved Claude session"
+    static let badRequest = "Usage request failed"
+    static let keychainApproval = "Keychain approval needed"
+    static let keychainUnreadable = "Saved session unavailable"
+    static let invalidCookie = "Cookie not recognized"
+    static let noSessionUsage = "Five-hour usage unavailable"
+    private static let limited = "claude.ai is limiting requests"
+    private static let notResponding = "claude.ai isn't responding"
+    private static let unexpected = "claude.ai returned an error"
+
+    static func http(_ status: Int) -> String {
+        switch status {
+        case 401, 403: return signedOut
+        case 429: return limited
+        case 500...599: return "\(notResponding) (error \(status))"
+        default: return "\(unexpected) (\(status))"
+        }
+    }
+
+    /// The line under a headline. A signed-out account has none: its sign-in hint says what to do.
+    static func detail(for headline: String) -> String? {
+        switch headline {
+        case unreachable: return "Check your connection. LimitFuel keeps trying."
+        case unreadable: return "claude.ai sent usage in a form LimitFuel doesn't recognize. LimitFuel keeps trying."
+        case noOrganization: return "Refresh to try again, or sign in again."
+        case noSession: return "Sign in to start tracking this account."
+        case badRequest, noSessionUsage: return "Refresh to try again."
+        case keychainApproval: return "macOS asks before LimitFuel reads this account's saved session. Click Refresh to allow it."
+        case keychainUnreadable: return "LimitFuel couldn't read it from the Keychain. Sign in again to replace it."
+        case invalidCookie: return "Paste the full Cookie header; it must contain sessionKey."
+        default:
+            return [limited, notResponding, unexpected].contains(where: headline.hasPrefix) ? "LimitFuel keeps trying." : nil
+        }
+    }
+}
+
 /// A switch that is Claude orange when on. The native switch drops its tint whenever the popover
 /// is not the key window, which for a menu bar popup is most of the time, and turns grey.
 struct BrandSwitchStyle: ToggleStyle {
@@ -414,6 +457,24 @@ private struct GlassMenuAnchorView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         anchor.view = nsView
+    }
+}
+
+/// A usage problem: the cause in bold, then what happens next.
+struct ProblemNote: View {
+    let headline: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(headline)
+                .font(.caption.weight(.semibold))
+            if let detail = ClaudeUsageProblem.detail(for: headline) {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundColor(Color.secondaryText)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -1088,6 +1149,8 @@ class UsageManager: ObservableObject {
     @Published var lastChromeCheck: Date?
     @Published var chromeDetectionEnabled = true
     @Published private(set) var lastChromeCheckWasInteractive = false
+    // The Chrome profile whose session belongs to another Claude user, from the last check.
+    private var profileWithOtherUser: String?
     private(set) var lastFetchStartedAt: Date?
 
     let accountID: String
@@ -1135,6 +1198,25 @@ class UsageManager: ObservableObject {
     var settingsChromeMessage: String? {
         guard hasFetchedData else { return chromeMessage }
         return lastChromeCheckWasInteractive && chromeNeedsAttention ? chromeMessage : nil
+    }
+
+    /// The line above a disconnected account's buttons. After claude.ai signs the session out,
+    /// it says how to get back in instead of the last Chrome status, unless a detection the
+    /// user just started needs their attention.
+    var connectionHint: String {
+        // The saved session is gone too, so it can no longer be kept.
+        if needsSignIn, let profile = profileWithOtherUser { return Self.otherUserSignedOutHint(profile) }
+        if needsSignIn, !(lastChromeCheckWasInteractive && chromeNeedsAttention) {
+            if chromeDetectionEnabled, let profile = chromeProfileName {
+                return "Sign in here, or sign in to claude.ai again in Chrome (\(profile)) and detect the session."
+            }
+            return "Sign in here, or sign in to claude.ai in Chrome and detect the session."
+        }
+        return settingsChromeMessage ?? "Sign in to claude.ai in Chrome and detect the session, or sign in here."
+    }
+
+    private static func otherUserSignedOutHint(_ profile: String) -> String {
+        "Chrome profile \(profile) is now signed in to a different Claude account, so this account can't renew from it. Sign in here to keep tracking it."
     }
 
     private var statusItem: NSStatusItem?
@@ -1198,6 +1280,7 @@ class UsageManager: ObservableObject {
         lastChromeCheckWasInteractive = interactive
         chromeMessage = nil
         chromeNeedsAttention = false
+        profileWithOtherUser = nil
         chromeProfiles = []
         let revision = connectionRevision
         let pinned = chooseProfile ? nil : (profileID ?? chromeProfileID)
@@ -1295,9 +1378,9 @@ class UsageManager: ObservableObject {
             credentialNeedsApproval = false
         } catch CredentialStoreError.interactionRequired {
             credentialNeedsApproval = true
-            errorMessage = "macOS needs your approval before LimitFuel can read this account's saved session. Click Refresh to allow it."
+            errorMessage = ClaudeUsageProblem.keychainApproval
         } catch {
-            errorMessage = "LimitFuel could not read this account's saved session from the Keychain."
+            errorMessage = ClaudeUsageProblem.keychainUnreadable
         }
     }
 
@@ -1310,7 +1393,7 @@ class UsageManager: ObservableObject {
     func saveSessionCookie(_ cookie: String) {
         let normalized = cookie.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ChromeCookieReader.validateHeader(normalized) else {
-            errorMessage = "Paste a valid full Cookie header containing sessionKey."
+            errorMessage = ClaudeUsageProblem.invalidCookie
             return
         }
         chromeDetectionEnabled = false
@@ -1445,7 +1528,10 @@ class UsageManager: ObservableObject {
                   let data = data, let resolved = ClaudeAccountIdentity.parse(data, organizationID: nil) else { return }
             guard UUID(uuidString: resolved.accountUUID) == UUID(uuidString: owner) else {
                 self.chromeNeedsAttention = true
-                self.chromeMessage = "Chrome profile \(session.profile.name) is now signed in to a different Claude account. This account keeps its saved session; add the other one with Add from Chrome."
+                self.profileWithOtherUser = session.profile.name
+                self.chromeMessage = self.needsSignIn
+                    ? Self.otherUserSignedOutHint(session.profile.name)
+                    : "Chrome profile \(session.profile.name) is now signed in to a different Claude account. This account keeps its saved session; add the other one with Add from Chrome."
                 return
             }
             self.replaceSessionCookie(session.cookieHeader)
@@ -1572,7 +1658,7 @@ class UsageManager: ObservableObject {
             if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403].contains(status) {
                 self?.resetUsageData()
                 self?.needsSignIn = true
-                self?.errorMessage = "HTTP \(status)"
+                self?.errorMessage = ClaudeUsageProblem.http(status)
                 AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
                 completion(nil)
                 return
@@ -1597,7 +1683,7 @@ class UsageManager: ObservableObject {
         lastFetchStartedAt = Date()
         guard !sessionCookie.isEmpty else {
             // Keep the Keychain approval message; it says how to recover.
-            if !credentialNeedsApproval { errorMessage = "Session cookie not set" }
+            if !credentialNeedsApproval { errorMessage = ClaudeUsageProblem.noSession }
             updateStatusBar()
             return
         }
@@ -1612,7 +1698,7 @@ class UsageManager: ObservableObject {
             guard let self = self, let orgId = orgId else {
 
                     if self?.errorMessage == nil {
-                        self?.errorMessage = "Could not get org ID from cookie"
+                        self?.errorMessage = ClaudeUsageProblem.noOrganization
                         AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
                     }
                     self?.menuBarOptions = []
@@ -1766,7 +1852,7 @@ class UsageManager: ObservableObject {
 
         guard let url = URL(string: urlString) else {
 
-                self.errorMessage = "Invalid URL"
+                self.errorMessage = ClaudeUsageProblem.badRequest
                 self.isLoading = false
 
             return
@@ -1790,7 +1876,7 @@ class UsageManager: ObservableObject {
         performRequest(request) { [weak self] data, response, error in
 
                 if let error = error {
-                    self?.errorMessage = "Network error"
+                    self?.errorMessage = ClaudeUsageProblem.unreachable
                     self?.menuBarOptions = []
                     self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     let code: DiagnosticErrorCode = (error as NSError).code == NSURLErrorTimedOut ? .timeout : .protocolFailure
@@ -1800,7 +1886,7 @@ class UsageManager: ObservableObject {
                 }
 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    self?.errorMessage = "Invalid response"
+                    self?.errorMessage = ClaudeUsageProblem.unreadable
                     self?.menuBarOptions = []
                     self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     AppDiagnostics.shared.recordFailure(provider: .claude, code: .protocolFailure)
@@ -1824,7 +1910,7 @@ class UsageManager: ObservableObject {
                     } else {
                         self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     }
-                    self?.errorMessage = "HTTP \(httpResponse.statusCode)"
+                    self?.errorMessage = ClaudeUsageProblem.http(httpResponse.statusCode)
                     AppDiagnostics.shared.recordFailure(provider: .claude,
                         code: [401, 403].contains(httpResponse.statusCode) ? .signIn : .protocolFailure)
                 }
@@ -1847,7 +1933,7 @@ class UsageManager: ObservableObject {
         hasFetchedData = false
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                errorMessage = "Invalid JSON"
+                errorMessage = ClaudeUsageProblem.unreadable
                 AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
                 return
             }
@@ -1875,7 +1961,7 @@ class UsageManager: ObservableObject {
                 sessionUsage = 0
                 sessionResetsAt = nil
                 hasFetchedData = false
-                errorMessage = "Claude five-hour usage is unavailable or invalid. Refresh to try again."
+                errorMessage = ClaudeUsageProblem.noSessionUsage
                 AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
                 return
             }
@@ -1950,7 +2036,7 @@ class UsageManager: ObservableObject {
             updatePercentages()
         } catch {
             NSLog("❌ Parse error: \(error.localizedDescription)")
-            errorMessage = "Parse error"
+            errorMessage = ClaudeUsageProblem.unreadable
             AppDiagnostics.shared.recordFailure(provider: .claude, code: .invalidData)
         }
     }
@@ -2994,8 +3080,8 @@ struct UsageView: View {
         VStack(alignment: .leading, spacing: 14) {
             ProviderHeader(name: "Claude", color: Brand.claude, detail: account.accountLabel)
 
-            if let error = account.errorMessage {
-                WarningNote(text: error)
+            if let error = account.errorMessage, error != ClaudeUsageProblem.signedOut {
+                ProblemNote(headline: error)
             }
 
             if account.hasFetchedData {
@@ -3184,17 +3270,28 @@ struct UsageView: View {
 
     private func chromeButtons(_ account: UsageManager) -> some View {
         HStack(spacing: 6) {
-            // A pinned account re-reads its own profile; it never takes another account's.
-            Button(account.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
-                account.detectChromeSession(interactive: true, chooseProfile: account.chromeProfileID == nil)
+            if account.needsSignIn {
+                signInHereButton(account).prominentButton(tint: Brand.claude)
+                detectChromeButton(account).secondaryButton()
+            } else {
+                detectChromeButton(account).prominentButton(tint: Brand.claude)
+                signInHereButton(account).secondaryButton()
             }
-            .disabled(account.isDetectingChrome)
-            .prominentButton(tint: Brand.claude)
-            // Renews this account in place when the same Claude user signs in.
-            Button("Sign In Here") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
-                .secondaryButton()
         }
         .controlSize(.small)
+    }
+
+    // A pinned account re-reads its own profile; it never takes another account's.
+    private func detectChromeButton(_ account: UsageManager) -> some View {
+        Button(account.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
+            account.detectChromeSession(interactive: true, chooseProfile: account.chromeProfileID == nil)
+        }
+        .disabled(account.isDetectingChrome)
+    }
+
+    // Renews this account in place when the same Claude user signs in.
+    private func signInHereButton(_ account: UsageManager) -> some View {
+        Button("Sign In Here") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
     }
 
     // An account signed in here renews by signing in again; the others use Chrome.
@@ -3202,12 +3299,9 @@ struct UsageView: View {
     private func connectionControls(_ account: UsageManager) -> some View {
         if account.signedInHere {
             VStack(alignment: .leading, spacing: 8) {
-                Text(account.needsSignIn
-                     ? "claude.ai ended this session. Sign in again to keep tracking this account."
-                     : "Sign in again if this account stays disconnected.")
-                    .font(.caption)
-                    .foregroundColor(Color.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                signInPrompt(account, hint: account.needsSignIn
+                             ? "Sign in again to keep tracking this account."
+                             : "Sign in again if this account stays disconnected.")
                 Button("Sign In Again") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
                     .prominentButton(tint: Brand.claude)
                     .controlSize(.small)
@@ -3225,15 +3319,27 @@ struct UsageView: View {
                     Text("Reading Claude sessions from Chrome…").font(.caption)
                 }
             } else {
-                Text(account.settingsChromeMessage ?? "Sign in to claude.ai in Chrome and detect the session, or sign in here.")
-                    .font(.caption)
-                    .foregroundColor(Color.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                signInPrompt(account, hint: account.connectionHint)
             }
-            safeStorageNote
+            // Signing in again is the way back for a signed-out session; Chrome is the fallback.
+            if !account.needsSignIn { safeStorageNote }
             chromeButtons(account)
             chromeProfileChoices(account)
         }
+    }
+
+    // A signed-out account leads with that in bold, right above how to get back in.
+    private func signInPrompt(_ account: UsageManager, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if account.needsSignIn {
+                Text(ClaudeUsageProblem.signedOut)
+                    .font(.caption.weight(.semibold))
+            }
+            Text(hint)
+                .font(.caption)
+                .foregroundColor(Color.secondaryText)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func chromeProfileChoices(_ account: UsageManager) -> some View {
@@ -3672,7 +3778,7 @@ struct UsageView: View {
             if account.credentialNeedsApproval {
                 keychainApprovalButton(account)
             } else if !account.hasFetchedData {
-                if let error = account.errorMessage { WarningNote(text: error) }
+                if let error = account.errorMessage, error != ClaudeUsageProblem.signedOut { ProblemNote(headline: error) }
                 connectionControls(account)
             } else if let message = account.settingsChromeMessage {
                 WarningNote(text: message)

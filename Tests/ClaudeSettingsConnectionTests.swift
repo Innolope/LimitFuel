@@ -224,7 +224,31 @@ struct ClaudeSettingsConnectionTests {
             check(manager.connectionSummary == nil, "actual authentication failure removes connection summary")
             keychainMessage(manager)
             check(manager.showsClaudeConnectionControls, "actual authentication failure exposes connect controls")
+            check(manager.errorMessage == ClaudeUsageProblem.signedOut, "a 401 says the account was signed out, not the status code")
+            check(manager.connectionHint.hasPrefix("Sign in here, or sign in to claude.ai"),
+                  "a signed-out account says how to sign back in instead of the last Chrome status")
+            detect(manager, fault, interactive: true)
+            check(manager.connectionHint == manager.settingsChromeMessage && manager.connectionHint != ClaudeUsageProblem.signedOut,
+                  "a detection the user starts shows its own result")
         }
+    }
+    private static func problemMessages() {
+        for status in [400, 401, 403, 404, 429, 500, 502, 503, 504] {
+            let headline = ClaudeUsageProblem.http(status)
+            check(!headline.hasPrefix("HTTP") && headline.contains("claude.ai"), "status \(status) names claude.ai, not a bare code")
+            check(ClaudeUsageProblem.detail(for: headline) == ([401, 403].contains(status) ? nil : "LimitFuel keeps trying."),
+                  "status \(status) says what happens next")
+        }
+        let headlines = [ClaudeUsageProblem.unreachable, ClaudeUsageProblem.unreadable, ClaudeUsageProblem.noOrganization,
+                         ClaudeUsageProblem.noSession, ClaudeUsageProblem.badRequest, ClaudeUsageProblem.keychainApproval,
+                         ClaudeUsageProblem.keychainUnreadable, ClaudeUsageProblem.invalidCookie, ClaudeUsageProblem.noSessionUsage]
+        check(headlines.allSatisfy { ClaudeUsageProblem.detail(for: $0) != nil }, "every other problem says what to do")
+        check(ClaudeUsageProblem.detail(for: "macOS needs something unexpected") == nil, "unknown text gets no invented detail")
+        check(ClaudeUsageProblem.http(401) == ClaudeUsageProblem.signedOut && ClaudeUsageProblem.http(403) == ClaudeUsageProblem.signedOut,
+              "401 and 403 mean signed out")
+        check(ClaudeUsageProblem.http(503).contains("(error 503)") && ClaudeUsageProblem.http(404).contains("(404)"),
+              "other statuses keep their code for support")
+        check(ClaudeUsageProblem.http(429).contains("limiting"), "rate limiting is named as such")
     }
     static func main() throws {
         _ = NSApplication.shared
@@ -232,6 +256,7 @@ struct ClaudeSettingsConnectionTests {
         try interactiveFailureWithManualCookie()
         try failureBeforeFirstSuccess()
         try authFailureAfterHiddenSyncFailure()
+        problemMessages()
         check(ConnectionProtocol.unexpectedCount == 0, "all HTTP used declared offline fixtures")
         print("ClaudeSettingsConnectionTests passed")
     }
