@@ -304,6 +304,44 @@ struct GlassIconButton: View {
     }
 }
 
+/// A switch that is Claude orange when on. The native switch drops its tint whenever the popover
+/// is not the key window, which for a menu bar popup is most of the time, and turns grey.
+struct BrandSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BrandSwitch(configuration: configuration)
+    }
+}
+
+private struct BrandSwitch: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let isOn = configuration.isOn
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) { configuration.isOn.toggle() }
+        } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn ? Brand.claude : Color.primary.opacity(colorScheme == .dark ? 0.2 : 0.1))
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: 20, height: 13)
+                    .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
+                    .padding(1.5)
+            }
+            .frame(width: 34, height: 16)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.45)
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}
+
 /// With keyboard navigation on, macOS focuses the popover's first control when it opens and
 /// draws a focus ring around the + button. The popover opens with nothing focused instead;
 /// Tab still moves focus through the controls.
@@ -3524,9 +3562,7 @@ struct UsageView: View {
             Spacer(minLength: 8)
             Toggle(title, isOn: isOn)
                 .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .tint(Brand.claude)
+                .toggleStyle(BrandSwitchStyle())
         }
     }
 

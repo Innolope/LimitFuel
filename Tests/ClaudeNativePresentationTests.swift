@@ -31,6 +31,31 @@ private final class ClaudeSignInOffline: URLProtocol {
     }
     override func stopLoading() {}
 }
+// Settings switches draw orange whatever the window state, and a click flips them.
+private func verifyBrandSwitch(source: String) {
+    var value = false
+    let binding = Binding(get: { value }, set: { value = $0 })
+    let window = NSWindow(contentRect: NSRect(x: 220, y: 220, width: 80, height: 40), styleMask: [.borderless], backing: .buffered, defer: false)
+    let host = NSHostingView(rootView: Toggle("Probe", isOn: binding).labelsHidden().toggleStyle(BrandSwitchStyle()))
+    host.frame = NSRect(x: 0, y: 0, width: 80, height: 40)
+    window.contentView = host
+    window.orderFrontRegardless()
+    settle(0.3)
+    func click() {
+        let point = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: nil)
+        for kind: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+        }
+        settle(0.3)
+    }
+    click()
+    require(value, "Brand switch must turn on when clicked")
+    click()
+    require(!value, "Brand switch must turn off when clicked again")
+    window.orderOut(nil)
+    let toggleRow = source.components(separatedBy: "private func settingToggle(").dropFirst().first ?? ""
+    require(toggleRow.prefix(1200).contains(".toggleStyle(BrandSwitchStyle())"), "Settings switches must use the orange switch style")
+}
 private final class FocusableProbe: NSView {
     override var acceptsFirstResponder: Bool { true }
 }
@@ -304,6 +329,7 @@ struct ClaudeNativePresentationAcceptance {
             print("LIMITATION: SwiftUI Chrome button AX inventory unavailable; disconnected recovery verified by source use-site and native document expansion")
         }
         verifyPopupFocus(source: source)
+        verifyBrandSwitch(source: source)
         verifySignInWindow(reader: reader)
         print("Native Claude presentation acceptance passed")
     }
