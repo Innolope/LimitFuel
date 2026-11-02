@@ -17,19 +17,21 @@ Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/Claude
 
 ## 📦 Set Up (1mn)
 
-1. Sign in to [claude.ai/settings/usage](https://claude.ai/settings/usage) in Google Chrome.
-2. Launch the app; it picks up your Chrome session automatically.
-3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
+1. Launch the app and click **Sign In to Claude**. Sign in to claude.ai in the
+   window that opens; LimitFuel saves the session to your Keychain.
+2. Already signed in to claude.ai in Google Chrome? The app picks up that session
+   automatically, or click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks.
-4. If several Chrome profiles are signed in, choose which ones to add. Add more
-   Claude accounts any time in Settings, from Chrome or with a manual cookie.
+3. Add more Claude accounts any time in Settings: sign in to each one, add them from
+   Chrome, or paste a manual cookie.
 5. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
    ChatGPT if needed); its limits appear below Claude's. See [Codex setup](#codex-setup).
 
-Usage refreshes every minute and Chrome cookies recheck hourly. **Open Claude in
-Chrome** opens the sign-in page. Chrome storage is only read; no Accessibility or
-Automation permission, extension or remote debugging is required. A manual cookie
-option remains for other browsers.
+Usage refreshes every minute and Chrome cookies recheck hourly. Each in-app sign-in
+keeps its web data in memory only and starts signed out, so any number of accounts can
+be signed in at once. Chrome storage is only read; no Accessibility or Automation
+permission, extension or remote debugging is required. A manual cookie option remains
+for other browsers.
 
 ## ✨ Features
 
@@ -52,8 +54,8 @@ option remains for other browsers.
 
 1. **Build** this fork using `cd app && ./build.sh --local`
 2. **Open** `app/build/LimitFuel.app` from the repository root
-3. **Sign in** to Claude in Chrome or Codex CLI with ChatGPT
-4. **Connect Chrome**: the session is picked up automatically, or click Detect Chrome Session
+3. **Sign in** to Claude in the app (or in Chrome), and to Codex CLI with ChatGPT
+4. **Connect**: click Sign In to Claude, or let the app pick up your Chrome session
 5. **Done!** Usage appears in menu bar
 
 ## 📸 Screenshots

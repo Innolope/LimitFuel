@@ -158,6 +158,35 @@ enum ClaudeSessionHeader {
     }
 }
 
+enum ClaudeSignInCookies {
+    static func header(from cookies: [HTTPCookie], now: Date = Date()) -> String? {
+        var selected: [String: HTTPCookie] = [:]
+        for cookie in cookies {
+            let domain = cookie.domain.lowercased()
+            let host = domain.hasPrefix(".") ? String(domain.dropFirst()) : domain
+            guard host == "claude.ai", cookie.expiresDate.map({ $0 >= now }) ?? true,
+                  ChromeCookieReader.validPair(name: cookie.name, value: cookie.value) else { continue }
+            if let previous = selected[cookie.name] {
+                let length = cookie.path.unicodeScalars.count
+                let previousLength = previous.path.unicodeScalars.count
+                guard length > previousLength
+                    || (length == previousLength && domain == "claude.ai"
+                        && previous.domain.lowercased() != "claude.ai") else { continue }
+            }
+            selected[cookie.name] = cookie
+        }
+        let header = selected.keys.sorted().map { "\($0)=\(selected[$0]!.value)" }.joined(separator: "; ")
+        return ChromeCookieReader.validateHeader(header) ? header : nil
+    }
+}
+
+enum ClaudeSignInOutcome: Equatable {
+    case added(String)
+    case renewed(String)
+    case alreadyAdded(String)
+    case failed(String)
+}
+
 // MARK: - Account identity
 
 struct ClaudeAccountIdentity: Equatable {
@@ -194,7 +223,7 @@ enum ClaudeAccountStore {
     static let autoAddKey = "claude_accounts_auto_add"
     static let pendingDeletionsKey = "claude_credential_deletions"
     static let legacyCookieKey = "claude_session_cookie"
-    static let fields = ["chrome_sync", "chrome_profile_id", "chrome_profile_name", "email",
+    static let fields = ["chrome_sync", "web_sign_in", "chrome_profile_id", "chrome_profile_name", "email",
                          "organization_name", "organization_id", "account_uuid", "last_notified_threshold",
                          "legacy_cookie_pending"]
     private static let legacyFlags = ["chrome_detection_enabled", "chrome_profile_id", "last_notified_threshold"]
@@ -313,7 +342,7 @@ final class ClaudeAccounts: ObservableObject {
     private let defaults: UserDefaults
     private let credentials: CredentialStore
     private let chromeReader: ChromeCookieReader
-    private let apiSession: URLSession?
+    private let apiSession: URLSession
     private weak var delegate: AppDelegate?
     private let chromeQueue = DispatchQueue(label: "com.innolope.limitfuel.chrome-accounts", qos: .userInitiated)
     // Discovered Chrome sessions stay in memory until the user adds one.
@@ -327,7 +356,13 @@ final class ClaudeAccounts: ObservableObject {
         self.defaults = defaults
         self.credentials = credentials
         self.chromeReader = chromeReader
-        self.apiSession = apiSession
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 20
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        self.apiSession = apiSession ?? URLSession(configuration: config, delegate: ClaudeSessionDelegate(), delegateQueue: nil)
         self.delegate = delegate
         ClaudeAccountStore.migrateLegacy(defaults: defaults, credentials: credentials)
         ClaudeAccountStore.retryDeletions(defaults: defaults, credentials: credentials)
@@ -391,6 +426,54 @@ final class ClaudeAccounts: ObservableObject {
         return true
     }
 
+    func completeSignIn(_ header: String, completion: @escaping (ClaudeSignInOutcome) -> Void) {
+        guard ChromeCookieReader.validateHeader(header) else {
+            completion(.failed("claude.ai did not return a session. Sign in again."))
+            return
+        }
+        if let account = accounts.first(where: { ClaudeSessionHeader.sameSession($0.sessionHeader, header) }) {
+            chromeMessage = nil
+            completion(.alreadyAdded(account.accountLabel))
+            return
+        }
+        guard let request = UsageManager.accountRequest(cookie: header) else {
+            completion(.failed("LimitFuel could not confirm the account with claude.ai. Check your connection and try again."))
+            return
+        }
+        let organization = ClaudeSessionHeader.value("lastActiveOrg", in: header)
+        apiSession.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                let status = (response as? HTTPURLResponse)?.statusCode
+                guard error == nil, status == 200, let data = data,
+                      let identity = ClaudeAccountIdentity.parse(data, organizationID: organization) else {
+                    completion(.failed(status == 401 || status == 403
+                        ? "claude.ai rejected this sign-in. Sign in again."
+                        : "LimitFuel could not confirm the account with claude.ai. Check your connection and try again."))
+                    return
+                }
+                let account = self.accounts.first {
+                    guard $0.claudeAccountUUID.flatMap(UUID.init(uuidString:)) == UUID(uuidString: identity.accountUUID) else { return false }
+                    guard let existing = $0.organizationID, let organization = organization else { return true }
+                    guard let existingUUID = UUID(uuidString: existing),
+                          let organizationUUID = UUID(uuidString: organization) else { return false }
+                    return existingUUID == organizationUUID
+                }
+                let saved: Bool
+                if let account = account {
+                    saved = account.adoptSignIn(header, identity: identity, organizationID: organization)
+                } else {
+                    saved = self.add(header, chromeProfile: nil, identity: identity, organizationID: organization)
+                }
+                guard saved else {
+                    completion(.failed("LimitFuel could not save this session to the Keychain. Try again."))
+                    return
+                }
+                self.chromeMessage = nil
+                completion(account == nil ? .added(identity.email) : .renewed(identity.email))
+            }
+        }.resume()
+    }
+
     /// Reads every Chrome profile. Only an explicit Detect may prompt for Chrome Safe
     /// Storage, and a background check adds nothing once any account exists.
     func detectChromeSessions(interactive: Bool) {
@@ -434,23 +517,9 @@ final class ClaudeAccounts: ObservableObject {
             chromeChoices = fresh.map(\.profile)
             chromeMessage = "Choose the Chrome profiles to add."
         } else if sessions.isEmpty {
-            chromeMessage = "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
+            chromeMessage = "No signed-in Claude session found in Chrome. Sign in to Claude here, or sign in in Chrome and detect again."
         } else if interactive {
             chromeMessage = "Every Claude account signed in to Chrome is already added. Chrome keeps one claude.ai sign-in per profile: sign in to another account in a different Chrome profile, or add a manual cookie."
-        }
-    }
-
-    func openClaudeInChrome() {
-        guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
-              let url = URL(string: "https://claude.ai/settings/usage") else {
-            chromeMessage = "Google Chrome is not installed. Install Chrome, or use a manual cookie."
-            return
-        }
-        NSWorkspace.shared.open([url], withApplicationAt: chrome,
-                               configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            if error != nil {
-                DispatchQueue.main.async { self?.chromeMessage = "Could not open Chrome. Open Claude in Chrome manually and sign in." }
-            }
         }
     }
 
@@ -469,7 +538,8 @@ final class ClaudeAccounts: ObservableObject {
     }
 
     /// The credential is written first; without it nothing is persisted.
-    private func add(_ cookie: String, chromeProfile: ChromeProfile?) -> Bool {
+    private func add(_ cookie: String, chromeProfile: ChromeProfile?, identity: ClaudeAccountIdentity? = nil,
+                     organizationID: String? = nil) -> Bool {
         let id = UUID().uuidString
         do {
             try credentials.write(cookie, account: id)
@@ -478,6 +548,13 @@ final class ClaudeAccounts: ObservableObject {
             return false
         }
         ClaudeAccountStore.create(id, defaults: defaults, chromeProfile: chromeProfile)
+        if let identity = identity {
+            defaults.set(true, forKey: ClaudeAccountStore.key(id, "web_sign_in"))
+            defaults.set(identity.email, forKey: ClaudeAccountStore.key(id, "email"))
+            defaults.set(identity.accountUUID, forKey: ClaudeAccountStore.key(id, "account_uuid"))
+            defaults.set(identity.organizationName, forKey: ClaudeAccountStore.key(id, "organization_name"))
+            defaults.set(organizationID, forKey: ClaudeAccountStore.key(id, "organization_id"))
+        }
         defaults.set(ClaudeAccountStore.ids(defaults) + [id], forKey: ClaudeAccountStore.idsKey)
         defaults.set(false, forKey: ClaudeAccountStore.autoAddKey)
         let account = makeAccount(id)

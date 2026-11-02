@@ -62,10 +62,21 @@ ad-hoc signed and does not launch automatically.
 
 When you first launch LimitFuel, you'll see a welcome message. Follow these steps:
 
+### Claude: sign in
+
+Click **Sign In to Claude** in the popup (or **Sign In…** in Settings > Claude
+accounts) and sign in to claude.ai in the window that opens. Use **Continue with
+email**: open the emailed login link in the window with **Paste Login Link**, or type
+the code claude.ai shows when the link opens in your browser. Google may block its own
+sign-in inside apps. Each window keeps its web data in memory only and starts signed
+out, so it never sees Chrome's sign-in; the session goes to your Keychain.
+
+claude.ai sessions last about four weeks. When one ends, the account shows **Sign In
+Again**; signing in as the same Claude user renews that account in place.
+
 ### Claude: automatic Chrome connection
 
-1. Sign in to claude.ai in Google Chrome. **Open Claude in Chrome** in the popup
-   opens the sign-in page.
+1. Sign in to claude.ai in Google Chrome.
 2. Launch LimitFuel. It picks up the Chrome session automatically.
 3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks. Background checks never prompt.
@@ -75,12 +86,15 @@ When you first launch LimitFuel, you'll see a welcome message. Follow these step
 ### Several Claude accounts
 
 Settings > Claude accounts lists every tracked account by its claude.ai email.
-**Add from Chrome** adds another signed-in Chrome profile, **Add Manual Cookie**
-adds an account from any browser, and the trash button removes one. Chrome keeps
+**Sign In…** adds an account signed in inside LimitFuel, **Add from Chrome** adds
+another signed-in Chrome profile, **Manual Cookie** adds an account from any
+browser, and the trash button removes one. Chrome keeps
 one claude.ai sign-in per profile. Signing in to another account in a profile adds
 that account; the earlier one keeps its saved session but can no longer renew it from
 that profile. For accounts to keep renewing from Chrome, sign each in to its own Chrome
-profile. An account never takes over a session that belongs to another Claude user. Each account
+profile, or sign them in inside LimitFuel. An account never takes over a session that
+belongs to another Claude user. Signing an account in inside LimitFuel stops its Chrome
+sync. Each account
 gets its own popup card, its own menu bar percentage (marked with a letter once
 there are two or more) and its own usage alerts. The same Claude account is never
 added twice.
@@ -158,14 +172,14 @@ rm -rf build
 ## 🐛 Troubleshooting
 
 ### "No data yet" showing
-- Sign in to Claude in Chrome, then click Detect Chrome Session
+- Click Sign In to Claude (or Sign In Again on the account), or sign in to Claude in Chrome and click Detect Chrome Session
 - Choose the correct profile if several are signed in
 - If macOS asked for Chrome Safe Storage access and you denied it, click Detect Chrome Session again and allow it
 
 ### Cookie expired
 - Session cookies expire periodically
 - Chrome cookies recheck hourly; click Detect Chrome Session for an immediate check
-- Sign in again using Open Claude in Chrome if needed
+- Signed in inside LimitFuel? Click Sign In Again on the account; claude.ai sessions last about four weeks
 
 ### Notifications not working
 - Click "Send Test Notification" in Settings

@@ -972,6 +972,8 @@ class UsageManager: ObservableObject {
     @Published private(set) var organizationName: String?
     // The Keychain item exists but macOS must ask before this build may read it.
     @Published private(set) var credentialNeedsApproval = false
+    @Published private(set) var signedInHere = false
+    @Published private(set) var needsSignIn = false
     private(set) var claudeAccountUUID: String?
     private(set) var chromeProfileID: String?
     var namesAccountInAlerts = false
@@ -988,6 +990,7 @@ class UsageManager: ObservableObject {
 
     var accountLabel: String {
         if let email = email { return email }
+        if signedInHere { return "Claude sign-in" }
         guard chromeDetectionEnabled else { return "Manual cookie" }
         return chromeProfileName ?? "Chrome"
     }
@@ -1000,6 +1003,7 @@ class UsageManager: ObservableObject {
     // Settings shows the working connection instead of a background sync failure.
     var connectionSummary: String? {
         guard hasFetchedData else { return nil }
+        if signedInHere { return "Signed in with LimitFuel" }
         guard chromeDetectionEnabled else { return "Connected with a manual cookie" }
         return chromeProfileName.map { "Connected via Chrome · \($0)" } ?? "Connected via Chrome"
     }
@@ -1046,6 +1050,7 @@ class UsageManager: ObservableObject {
         self.accountID = accountID ?? ClaudeAccountStore.primaryAccountID(defaults: defaults, credentials: credentials)
         if let session = apiSession { self.apiSession = session }
         chromeDetectionEnabled = defaults.bool(forKey: key("chrome_sync"))
+        signedInHere = defaults.bool(forKey: key("web_sign_in"))
         chromeProfileID = defaults.string(forKey: key("chrome_profile_id"))
         chromeProfileName = defaults.string(forKey: key("chrome_profile_name"))
         email = defaults.string(forKey: key("email"))
@@ -1053,6 +1058,9 @@ class UsageManager: ObservableObject {
         claudeAccountUUID = defaults.string(forKey: key("account_uuid"))
         lastNotifiedThreshold = defaults.integer(forKey: key("last_notified_threshold"))
         loadSessionCookie()
+        if signedInHere, email != nil, claudeAccountUUID != nil, !sessionCookie.isEmpty {
+            identityRequestedFor = ClaudeSessionHeader.identity(sessionCookie)
+        }
     }
 
     func detectChromeSessionIfDue() {
@@ -1090,7 +1098,7 @@ class UsageManager: ObservableObject {
                     guard sessions.count == 1, let session = sessions.first else {
                         self.chromeNeedsAttention = true
                         self.chromeMessage = sessions.isEmpty
-                            ? "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
+                            ? "No signed-in Claude session found in Chrome. Sign in to Claude here, or sign in in Chrome and detect again."
                             : "Choose the Chrome profile to connect."
                         return
                     }
@@ -1099,6 +1107,8 @@ class UsageManager: ObservableObject {
                     self.defaults.set(session.profile.name, forKey: self.key("chrome_profile_name"))
                     self.defaults.set(true, forKey: self.key("chrome_sync"))
                     self.chromeDetectionEnabled = true
+                    self.signedInHere = false
+                    self.defaults.set(false, forKey: self.key("web_sign_in"))
                     self.chromeProfileName = session.profile.name
                     self.chromeProfiles = []
                     self.chromeMessage = "Connected to Chrome: \(session.profile.name). Rechecks hourly."
@@ -1113,20 +1123,6 @@ class UsageManager: ObservableObject {
                         self.fetchUsage()
                     }
                 }
-            }
-        }
-    }
-
-    func openClaudeInChrome() {
-        guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
-              let url = URL(string: "https://claude.ai/settings/usage") else {
-            chromeMessage = "Google Chrome is not installed. Install Chrome, or use a manual cookie."
-            return
-        }
-        NSWorkspace.shared.open([url], withApplicationAt: chrome,
-                               configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            if error != nil {
-                DispatchQueue.main.async { self?.chromeMessage = "Could not open Chrome. Open Claude in Chrome manually and sign in." }
             }
         }
     }
@@ -1196,6 +1192,8 @@ class UsageManager: ObservableObject {
         }
         chromeDetectionEnabled = false
         defaults.set(false, forKey: key("chrome_sync"))
+        signedInHere = false
+        defaults.set(false, forKey: key("web_sign_in"))
         chromeProfileName = nil
         chromeProfiles = []
         chromeMessage = "Using a manual cookie. Detect Chrome Session to enable hourly sync."
@@ -1203,7 +1201,45 @@ class UsageManager: ObservableObject {
         fetchUsage()
     }
 
-    private func replaceSessionCookie(_ cookie: String) {
+    @discardableResult
+    func adoptSignIn(_ header: String, identity: ClaudeAccountIdentity, organizationID: String?) -> Bool {
+        guard !removed else { return false }
+        do {
+            try credentials.write(header, account: accountID)
+        } catch {
+            return false
+        }
+        chromeDetectionEnabled = false
+        defaults.set(false, forKey: key("chrome_sync"))
+        chromeProfileID = nil
+        chromeProfileName = nil
+        defaults.removeObject(forKey: key("chrome_profile_id"))
+        defaults.removeObject(forKey: key("chrome_profile_name"))
+        chromeProfiles = []
+        chromeMessage = nil
+        chromeNeedsAttention = false
+        signedInHere = true
+        defaults.set(true, forKey: key("web_sign_in"))
+        let threshold = lastNotifiedThreshold
+        replaceSessionCookie(header, credentialAlreadySaved: true)
+        lastNotifiedThreshold = threshold
+        defaults.set(threshold, forKey: key("last_notified_threshold"))
+        email = identity.email
+        claudeAccountUUID = identity.accountUUID
+        organizationName = identity.organizationName
+        resolvedOrganizationID = organizationID
+        defaults.set(identity.email, forKey: key("email"))
+        defaults.set(identity.accountUUID, forKey: key("account_uuid"))
+        defaults.set(identity.organizationName, forKey: key("organization_name"))
+        defaults.set(organizationID, forKey: key("organization_id"))
+        identityRequestedFor = ClaudeSessionHeader.identity(header)
+        errorMessage = nil
+        needsSignIn = false
+        fetchUsage()
+        return true
+    }
+
+    private func replaceSessionCookie(_ cookie: String, credentialAlreadySaved: Bool = false) {
         guard !removed else { return }
         invalidateConnection()
         let sameSession = ClaudeSessionHeader.identity(sessionCookie) == ClaudeSessionHeader.identity(cookie)
@@ -1217,8 +1253,9 @@ class UsageManager: ObservableObject {
             clearIdentity()
         }
         sessionCookie = cookie
+        needsSignIn = false
         do {
-            try credentials.write(cookie, account: accountID)
+            if !credentialAlreadySaved { try credentials.write(cookie, account: accountID) }
             credentialNeedsApproval = false
             if defaults.bool(forKey: key("legacy_cookie_pending")) {
                 defaults.removeObject(forKey: ClaudeAccountStore.legacyCookieKey)
@@ -1232,6 +1269,9 @@ class UsageManager: ObservableObject {
 
     func clearSessionCookie() {
         invalidateConnection()
+        signedInHere = false
+        needsSignIn = false
+        defaults.set(false, forKey: key("web_sign_in"))
         chromeDetectionEnabled = false
         chromeProfileName = nil
         chromeProfiles = []
@@ -1253,12 +1293,13 @@ class UsageManager: ObservableObject {
         removed = true
         invalidateConnection()
         sessionCookie = ""
+        needsSignIn = false
         resetUsageData()
     }
 
     // MARK: Account identity
 
-    private func accountRequest(cookie: String) -> URLRequest? {
+    static func accountRequest(cookie: String) -> URLRequest? {
         guard let url = URL(string: "https://claude.ai/api/account") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -1275,7 +1316,7 @@ class UsageManager: ObservableObject {
     /// Takes the profile's new session only when it is this Claude user's. Another user's
     /// session stays in Chrome for Add from Chrome; this account keeps its own.
     private func adoptIfSameUser(_ session: ChromeSession, owner: String) {
-        guard let request = accountRequest(cookie: session.cookieHeader) else { return }
+        guard let request = Self.accountRequest(cookie: session.cookieHeader) else { return }
         performRequest(request, identity: true) { [weak self] data, response, _ in
             guard let self = self, !self.removed, (response as? HTTPURLResponse)?.statusCode == 200,
                   let data = data, let resolved = ClaudeAccountIdentity.parse(data, organizationID: nil) else { return }
@@ -1293,7 +1334,7 @@ class UsageManager: ObservableObject {
     func fetchIdentityIfNeeded() {
         let identity = ClaudeSessionHeader.identity(sessionCookie)
         guard !removed, !sessionCookie.isEmpty, identityRequestedFor != identity,
-              let request = accountRequest(cookie: sessionCookie) else { return }
+              let request = Self.accountRequest(cookie: sessionCookie) else { return }
         identityRequestedFor = identity
         let organization = organizationID
         performRequest(request, identity: true) { [weak self] data, response, _ in
@@ -1407,6 +1448,7 @@ class UsageManager: ObservableObject {
         performRequest(request) { [weak self] data, response, error in
             if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403].contains(status) {
                 self?.resetUsageData()
+                self?.needsSignIn = true
                 self?.errorMessage = "HTTP \(status)"
                 AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
                 completion(nil)
@@ -1652,7 +1694,10 @@ class UsageManager: ObservableObject {
                 } else {
                     self?.menuBarOptions = []
                     if [401, 403].contains(httpResponse.statusCode) {
+                        // Only usage and bootstrap mean a signed-out session; a detail
+                        // endpoint may refuse a member without billing access.
                         self?.resetUsageData()
+                        self?.needsSignIn = true
                     } else {
                         self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     }
@@ -1772,6 +1817,7 @@ class UsageManager: ObservableObject {
             menuBarUpdatedAt = lastUpdated
             errorMessage = nil
             hasFetchedData = true
+            needsSignIn = false
             menuBarOptions = availableWindows
             menuBarDisplayOptions = availableWindows
             menuBarIsStale = false
@@ -2720,14 +2766,14 @@ struct UsageView: View {
                 if account.credentialNeedsApproval {
                     keychainApprovalButton(account)
                 } else {
-                    chromeConnectionControls(account)
+                    connectionControls(account)
                 }
             }
         }
         .glassCard()
     }
 
-    // Before any account exists: find one in Chrome.
+    // Before any account exists: sign in here, or find a session in Chrome.
     private var claudeConnectCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             ProviderHeader(name: "Claude", color: Brand.claude, detail: nil)
@@ -2738,20 +2784,20 @@ struct UsageView: View {
                         Text("Reading Claude sessions from Chrome…").font(.caption)
                     }
                 } else {
-                    Text(claude.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                    Text(claude.chromeMessage ?? "Sign in to Claude here, or detect a session you already have in Chrome.")
                         .font(.caption)
                         .foregroundColor(Color.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 safeStorageNote
                 HStack(spacing: 6) {
+                    Button("Sign In to Claude") { ClaudeSignInWindowController.show(accounts: claude) }
+                        .prominentButton(tint: Brand.claude)
                     Button(claude.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
                         claude.detectChromeSessions(interactive: true)
                     }
                     .disabled(claude.isDetectingChrome)
-                    .prominentButton(tint: Brand.claude)
-                    Button("Open Claude in Chrome") { claude.openClaudeInChrome() }
-                        .secondaryButton()
+                    .secondaryButton()
                 }
                 .controlSize(.small)
                 chromeChoices
@@ -2895,10 +2941,31 @@ struct UsageView: View {
             }
             .disabled(account.isDetectingChrome)
             .prominentButton(tint: Brand.claude)
-            Button("Open Claude in Chrome") { account.openClaudeInChrome() }
+            // Renews this account in place when the same Claude user signs in.
+            Button("Sign In Here") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
                 .secondaryButton()
         }
         .controlSize(.small)
+    }
+
+    // An account signed in here renews by signing in again; the others use Chrome.
+    @ViewBuilder
+    private func connectionControls(_ account: UsageManager) -> some View {
+        if account.signedInHere {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(account.needsSignIn
+                     ? "claude.ai ended this session. Sign in again to keep tracking this account."
+                     : "Sign in again if this account stays disconnected.")
+                    .font(.caption)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Sign In Again") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
+                    .prominentButton(tint: Brand.claude)
+                    .controlSize(.small)
+            }
+        } else {
+            chromeConnectionControls(account)
+        }
     }
 
     private func chromeConnectionControls(_ account: UsageManager) -> some View {
@@ -2909,7 +2976,7 @@ struct UsageView: View {
                     Text("Reading Claude sessions from Chrome…").font(.caption)
                 }
             } else {
-                Text(account.settingsChromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                Text(account.settingsChromeMessage ?? "Sign in to claude.ai in Chrome and detect the session, or sign in here.")
                     .font(.caption)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3239,7 +3306,7 @@ struct UsageView: View {
     private var claudeAccountsSettings: some View {
         VStack(alignment: .leading, spacing: 10) {
             if claude.accounts.isEmpty {
-                Text("No Claude account yet. Add one from Chrome, or paste a cookie.")
+                Text("No Claude account yet. Sign in, add one from Chrome, or paste a cookie.")
                     .font(.caption)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3261,12 +3328,14 @@ struct UsageView: View {
             }
             chromeChoices
             HStack(spacing: 6) {
+                Button("Sign In…") { ClaudeSignInWindowController.show(accounts: claude) }
+                    .prominentButton(tint: Brand.claude)
                 Button(claude.isDetectingChrome ? "Detecting…" : "Add from Chrome") {
                     claude.detectChromeSessions(interactive: true)
                 }
                 .disabled(claude.isDetectingChrome)
                 .secondaryButton()
-                Button(showingCookieInput ? "Hide Manual Cookie" : "Add Manual Cookie") {
+                Button(showingCookieInput ? "Hide Cookie" : "Manual Cookie") {
                     showingCookieInput.toggle()
                 }
                 .secondaryButton()
@@ -3277,7 +3346,8 @@ struct UsageView: View {
     }
 
     private func claudeAccountSource(_ account: UsageManager) -> String {
-        var parts = [account.chromeDetectionEnabled
+        var parts = [account.signedInHere ? "Signed in with LimitFuel"
+            : account.chromeDetectionEnabled
             ? "Chrome · \(account.chromeProfileName ?? account.chromeProfileID ?? "profile")"
             : "Manual cookie"]
         if let organization = account.organizationName { parts.append(organization) }
@@ -3338,7 +3408,7 @@ struct UsageView: View {
                 keychainApprovalButton(account)
             } else if !account.hasFetchedData {
                 if let error = account.errorMessage { WarningNote(text: error) }
-                chromeConnectionControls(account)
+                connectionControls(account)
             } else if let message = account.settingsChromeMessage {
                 WarningNote(text: message)
             }

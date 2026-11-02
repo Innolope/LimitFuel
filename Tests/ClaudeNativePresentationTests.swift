@@ -149,13 +149,15 @@ struct ClaudeNativePresentationAcceptance {
             fatalError("Unterminated source declaration: \(name)")
         }
         let cardSource = declaration("private func claudeCard(_ account: UsageManager) -> some View")
-        require(cardSource.contains("if account.showsClaudeConnectionControls {") && cardSource.contains("chromeConnectionControls(account)"), "Actual dashboard must guard Chrome controls with connection predicate")
+        require(cardSource.contains("if account.showsClaudeConnectionControls {") && cardSource.contains("connectionControls(account)"), "Actual dashboard must guard connection controls with connection predicate")
         require(cardSource.contains("if account.showsClaudeWeeklyUsage {"), "Actual weekly row must use the accepted presentation predicate")
         require(declaration("private var settingsPage: some View").contains("claudeAccountsSettings"), "Settings must include account connection view")
         require(declaration("private var claudeAccountsSettings: some View").contains("claudeAccountRow"), "Settings must list each account")
-        require(declaration("private func claudeAccountRow(_ account: UsageManager) -> some View").contains("chromeConnectionControls(account)"), "Settings account view must retain Chrome controls")
+        require(declaration("private func claudeAccountRow(_ account: UsageManager) -> some View").contains("connectionControls(account)"), "Settings account view must retain connection controls")
+        let controls = declaration("private func connectionControls(_ account: UsageManager) -> some View")
+        require(controls.contains("if account.signedInHere {") && controls.contains("Sign In Again") && controls.contains("chromeConnectionControls(account)"), "Signed-in accounts renew by signing in; the others keep Chrome controls")
         require(declaration("private func chromeConnectionControls(_ account: UsageManager) -> some View").contains("chromeButtons(account)"), "Shared connection controls must include Chrome actions")
-        require(declaration("private func chromeButtons(_ account: UsageManager) -> some View").contains("Open Claude in Chrome"), "Chrome actions must contain the open action")
+        require(declaration("private func chromeButtons(_ account: UsageManager) -> some View").contains("Sign In Here"), "Chrome actions must offer signing in here")
         let normal = state("connected-weekly-absent")
         for (attention, detecting) in [(true, false), (false, true), (true, true)] {
             claude.chromeNeedsAttention = attention
