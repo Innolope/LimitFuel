@@ -47,7 +47,7 @@ python3 "$REPO/Tests/BoundedCommandTests.py"
   -emit-module-path "$BUILD/LimitFuelAcceptance.swiftmodule" -lsqlite3 \
   -Xlinker -install_name -Xlinker @rpath/libLimitFuelAcceptance.dylib \
   "$REPO/app/AppDiagnostics.swift" "$REPO/app/LimitFuel.swift" "$REPO/app/ChromeCookies.swift" \
-  "$REPO/app/ClaudeAccounts.swift" \
+  "$REPO/app/ClaudeAccounts.swift" "$REPO/app/ClaudeSignInWindow.swift" \
   "$REPO/app/CodexUsage.swift" "$REPO/app/CodexUsageView.swift" "$REPO/app/MenuBarStatus.swift" \
   "$REPO/app/PopupLayout.swift" "$REPO/app/MenuBarPreferences.swift" \
   -o "$BUILD/libLimitFuelAcceptance.dylib"
@@ -73,6 +73,8 @@ CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/lifecycle-tests"
 # Claude accounts, Keychain storage and identity (spec-first, 2026-10-31).
 compile_acceptance "ClaudeAccountsTests" "claude-accounts-tests"
 CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-accounts-tests"
+compile_acceptance "ClaudeSignInTests" "claude-sign-in-tests"
+CLAUDE_TEST_TMPDIR="$BUILD" "$BUILD/claude-sign-in-tests"
 compile_acceptance "MenuBarStatusTests" "menubar-tests"
 "$BUILD/menubar-tests"
 
@@ -127,7 +129,7 @@ compile_acceptance "DiagnosticsTests" "diagnostics-tests"
 
 # Status alert expiry, meter mode, pickers, Codex account race, Claude
 # connection state and legacy settings migration (spec-first, 2026-10-12).
-for SUITE in StatusExpiryTests MeterModeTests CodexAccountRaceTests ClaudeSettingsConnectionTests LegacySettingsMigrationTests LaunchGateTests; do
+for SUITE in StatusExpiryTests CodexStatusTests UpdateLinkTests MeterModeTests CodexAccountRaceTests ClaudeSettingsConnectionTests LegacySettingsMigrationTests LaunchGateTests; do
     compile_acceptance "$SUITE" "$SUITE"
     CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/$SUITE"
 done

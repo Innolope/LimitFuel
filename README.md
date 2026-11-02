@@ -9,27 +9,33 @@ A lightweight, open-source macOS menu bar application that displays Claude and C
 
 ## 📥 Download
 
-Build this fork with `cd app && ./build.sh --local`. The app is created at
-`app/build/LimitFuel.app`. Fork changes have not been released as a notarized installer.
-Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar).
+- **macOS 12 or later**, Apple Silicon and Intel: [LimitFuel.dmg](https://download.innolope.com/limitfuel/LimitFuel.dmg), signed and notarized.
+- **Windows 10 or 11** (beta, not code-signed yet): [LimitFuel-Setup-x64.exe](https://download.innolope.com/limitfuel/LimitFuel-Setup-x64.exe).
+  See [Windows (Beta)](linux/README.md#windows-beta).
+- **Linux** tray app: [AppImage](https://download.innolope.com/limitfuel/LimitFuel-x86_64.AppImage), [.deb](https://download.innolope.com/limitfuel/LimitFuel-amd64.deb),
+  [.rpm](https://download.innolope.com/limitfuel/LimitFuel-x86_64.rpm). See [`linux/`](linux/README.md).
 
-**Linux:** a tray version with the same Claude and Codex tracking lives in [`linux/`](linux/README.md). CI builds an AppImage, a `.deb` and an `.rpm`.
+Checksums: [SHA256SUMS](https://download.innolope.com/limitfuel/SHA256SUMS). To build the macOS app yourself, run
+`cd app && ./build.sh --local`; the app is created at `app/build/LimitFuel.app`.
+Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar).
 
 ## 📦 Set Up (1mn)
 
-1. Sign in to [claude.ai/settings/usage](https://claude.ai/settings/usage) in Google Chrome.
-2. Launch the app; it picks up your Chrome session automatically.
-3. If it isn't connected yet, click **Detect Chrome Session** and allow access to
+1. Launch the app and click **Sign In to Claude**. Sign in to claude.ai in the
+   window that opens; LimitFuel saves the session to your Keychain.
+2. Already signed in to claude.ai in Google Chrome? The app picks up that session
+   automatically, or click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks.
-4. If several Chrome profiles are signed in, choose which ones to add. Add more
-   Claude accounts any time in Settings, from Chrome or with a manual cookie.
-5. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
+3. Add more Claude accounts any time with **+** in the popup: sign in to each one,
+   add them from Chrome, or paste a manual cookie.
+4. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
    ChatGPT if needed); its limits appear below Claude's. See [Codex setup](#codex-setup).
 
-Usage refreshes every minute and Chrome cookies recheck hourly. **Open Claude in
-Chrome** opens the sign-in page. Chrome storage is only read; no Accessibility or
-Automation permission, extension or remote debugging is required. A manual cookie
-option remains for other browsers.
+Usage refreshes every minute and Chrome cookies recheck hourly. Each in-app sign-in
+keeps its web data in memory only and starts signed out, so any number of accounts can
+be signed in at once. Chrome storage is only read; no Accessibility or Automation
+permission, extension or remote debugging is required. A manual cookie option remains
+for other browsers.
 
 ## ✨ Features
 
@@ -41,6 +47,7 @@ option remains for other browsers.
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
 - 👥 **Several Claude accounts** - Each account shows its email in the popup and its own percentage in the menu bar
+- 🚦 **Service status** - Claude and Codex outages from status.claude.com and status.openai.com, with optional alerts
 - 🔒 **Privacy-first** - Session cookies in your macOS Keychain and read-only provider access, with a Settings opt-out for diagnostics
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
 - 🩺 **Crash and error reporting** - Sentry reporting is on by default, with an off switch in Settings; see [diagnostics and privacy](docs/diagnostics.md)
@@ -52,8 +59,8 @@ option remains for other browsers.
 
 1. **Build** this fork using `cd app && ./build.sh --local`
 2. **Open** `app/build/LimitFuel.app` from the repository root
-3. **Sign in** to Claude in Chrome or Codex CLI with ChatGPT
-4. **Connect Chrome**: the session is picked up automatically, or click Detect Chrome Session
+3. **Sign in** to Claude in the app (or in Chrome), and to Codex CLI with ChatGPT
+4. **Connect**: click Sign In to Claude, or let the app pick up your Chrome session
 5. **Done!** Usage appears in menu bar
 
 ## 📸 Screenshots
@@ -81,6 +88,8 @@ age; Increase Contrast or Reduce Transparency keeps the numbers sharp.
 - Session (5-hour) usage with progress bar
 - Weekly (7-day) usage with progress bar
 - Weekly Sonnet usage (Pro plan only)
+- **+** to add a Claude account without opening Settings
+- Claude and Codex service status, with details during an incident
 - Settings for notifications and shortcuts
 
 ## 📁 Repository Structure

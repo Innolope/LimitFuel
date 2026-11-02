@@ -304,6 +304,119 @@ struct GlassIconButton: View {
     }
 }
 
+/// A switch that is Claude orange when on. The native switch drops its tint whenever the popover
+/// is not the key window, which for a menu bar popup is most of the time, and turns grey.
+struct BrandSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BrandSwitch(configuration: configuration)
+    }
+}
+
+private struct BrandSwitch: View {
+    let configuration: ToggleStyleConfiguration
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let isOn = configuration.isOn
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) { configuration.isOn.toggle() }
+        } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn ? Brand.claude : Color.primary.opacity(colorScheme == .dark ? 0.2 : 0.1))
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: 20, height: 13)
+                    .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
+                    .padding(1.5)
+            }
+            .frame(width: 34, height: 16)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.45)
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}
+
+/// With keyboard navigation on, macOS focuses the popover's first control when it opens and
+/// draws a focus ring around the + button. The popover opens with nothing focused instead;
+/// Tab still moves focus through the controls.
+enum PopupFocus {
+    static func clearInitialFocus(in window: NSWindow) {
+        // A text field the user is typing in keeps its focus.
+        guard !(window.firstResponder is NSText) else { return }
+        window.makeFirstResponder(nil)
+    }
+}
+
+struct GlassMenuItem {
+    let title: String
+    var enabled = true
+    let action: () -> Void
+}
+
+/// A glass icon button that opens a menu below itself.
+struct GlassMenuButton: View {
+    let symbol: String
+    let help: String
+    let items: [GlassMenuItem]
+    @State private var anchor = GlassMenuAnchor()
+
+    var body: some View {
+        GlassIconButton(symbol: symbol, help: help) { anchor.popUp(items) }
+            .background(GlassMenuAnchorView(anchor: anchor))
+    }
+}
+
+final class GlassMenuAnchor: NSObject {
+    weak var view: NSView?
+    private var actions: [() -> Void] = []
+
+    func menu(for items: [GlassMenuItem]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        actions = items.map(\.action)
+        for (index, item) in items.enumerated() {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(run(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.tag = index
+            menuItem.isEnabled = item.enabled
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    func popUp(_ items: [GlassMenuItem]) {
+        guard let view = view else { return }
+        // The menu's top-left corner goes just below the button's bottom-left corner.
+        let below = NSPoint(x: 0, y: view.isFlipped ? view.bounds.height + 4 : -4)
+        menu(for: items).popUp(positioning: nil, at: below, in: view)
+    }
+
+    @objc func run(_ sender: NSMenuItem) {
+        guard actions.indices.contains(sender.tag) else { return }
+        actions[sender.tag]()
+    }
+}
+
+private struct GlassMenuAnchorView: NSViewRepresentable {
+    let anchor: GlassMenuAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        anchor.view = nsView
+    }
+}
+
 struct WarningNote: View {
     let text: String
 
@@ -336,6 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var claudeAccounts: ClaudeAccounts!
     var settings: AppSettings!
     var statusManager: StatusManager!
+    var codexStatusManager: StatusManager!
     var updateManager: UpdateManager!
     var codexManager: CodexUsageManager!
     private var claudePollTimers: [String: Timer] = [:]
@@ -378,6 +492,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             settings.loadSettings()
         }
         statusManager = StatusManager()
+        codexStatusManager = StatusManager(source: .codex)
         updateManager = UpdateManager()
         codexManager = CodexUsageManager()
         codexManager.onChange = { [weak self] in
@@ -402,6 +517,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             statusManager: statusManager,
             updateManager: updateManager,
             codexManager: codexManager,
+            codexStatusManager: codexStatusManager,
             popupPresentation: popupPresentation,
             menuBarPreferences: menuBarPreferences
         ))
@@ -433,6 +549,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         claudeAccounts.refreshChromeAccounts()
         codexManager.fetchUsage()
         statusManager.fetch()
+        codexStatusManager.fetch()
         updateManager.fetch()
 
         scheduleClaudePolls()
@@ -440,6 +557,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Provider usage has independent adaptive timers. Status remains once a minute.
         Timer.scheduledTimer(withTimeInterval: RefreshSchedule.usageInterval, repeats: true) { _ in
             self.statusManager.fetch()
+            self.codexStatusManager.fetch()
             self.updateSelectedProviderIcon()
         }
 
@@ -689,6 +807,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // A retained hosting controller does not necessarily receive onAppear
         // again. Signal each actual presentation after its window is attached.
         popupPresentation.beginPresentation()
+        if let window = popover.contentViewController?.view.window {
+            PopupFocus.clearInitialFocus(in: window)
+            // SwiftUI may settle its focus after the show; check once more on the next turn.
+            DispatchQueue.main.async { PopupFocus.clearInitialFocus(in: window) }
+        }
     }
 
     func popoverDidClose(_ notification: Notification) {
@@ -972,6 +1095,8 @@ class UsageManager: ObservableObject {
     @Published private(set) var organizationName: String?
     // The Keychain item exists but macOS must ask before this build may read it.
     @Published private(set) var credentialNeedsApproval = false
+    @Published private(set) var signedInHere = false
+    @Published private(set) var needsSignIn = false
     private(set) var claudeAccountUUID: String?
     private(set) var chromeProfileID: String?
     var namesAccountInAlerts = false
@@ -988,6 +1113,7 @@ class UsageManager: ObservableObject {
 
     var accountLabel: String {
         if let email = email { return email }
+        if signedInHere { return "Claude sign-in" }
         guard chromeDetectionEnabled else { return "Manual cookie" }
         return chromeProfileName ?? "Chrome"
     }
@@ -1000,6 +1126,7 @@ class UsageManager: ObservableObject {
     // Settings shows the working connection instead of a background sync failure.
     var connectionSummary: String? {
         guard hasFetchedData else { return nil }
+        if signedInHere { return "Signed in with LimitFuel" }
         guard chromeDetectionEnabled else { return "Connected with a manual cookie" }
         return chromeProfileName.map { "Connected via Chrome · \($0)" } ?? "Connected via Chrome"
     }
@@ -1046,6 +1173,7 @@ class UsageManager: ObservableObject {
         self.accountID = accountID ?? ClaudeAccountStore.primaryAccountID(defaults: defaults, credentials: credentials)
         if let session = apiSession { self.apiSession = session }
         chromeDetectionEnabled = defaults.bool(forKey: key("chrome_sync"))
+        signedInHere = defaults.bool(forKey: key("web_sign_in"))
         chromeProfileID = defaults.string(forKey: key("chrome_profile_id"))
         chromeProfileName = defaults.string(forKey: key("chrome_profile_name"))
         email = defaults.string(forKey: key("email"))
@@ -1053,6 +1181,9 @@ class UsageManager: ObservableObject {
         claudeAccountUUID = defaults.string(forKey: key("account_uuid"))
         lastNotifiedThreshold = defaults.integer(forKey: key("last_notified_threshold"))
         loadSessionCookie()
+        if signedInHere, email != nil, claudeAccountUUID != nil, !sessionCookie.isEmpty {
+            identityRequestedFor = ClaudeSessionHeader.identity(sessionCookie)
+        }
     }
 
     func detectChromeSessionIfDue() {
@@ -1090,7 +1221,7 @@ class UsageManager: ObservableObject {
                     guard sessions.count == 1, let session = sessions.first else {
                         self.chromeNeedsAttention = true
                         self.chromeMessage = sessions.isEmpty
-                            ? "No signed-in Claude session found. Open Claude in Chrome, sign in, then detect again."
+                            ? "No signed-in Claude session found in Chrome. Sign in to Claude here, or sign in in Chrome and detect again."
                             : "Choose the Chrome profile to connect."
                         return
                     }
@@ -1099,28 +1230,22 @@ class UsageManager: ObservableObject {
                     self.defaults.set(session.profile.name, forKey: self.key("chrome_profile_name"))
                     self.defaults.set(true, forKey: self.key("chrome_sync"))
                     self.chromeDetectionEnabled = true
+                    self.signedInHere = false
+                    self.defaults.set(false, forKey: self.key("web_sign_in"))
                     self.chromeProfileName = session.profile.name
                     self.chromeProfiles = []
                     self.chromeMessage = "Connected to Chrome: \(session.profile.name). Rechecks hourly."
-                    if self.sessionCookie != session.cookieHeader {
+                    if self.sessionCookie == session.cookieHeader {
+                        if !self.hasFetchedData { self.fetchUsage() }
+                    } else if let owner = self.claudeAccountUUID, !self.sessionCookie.isEmpty,
+                              !ClaudeSessionHeader.sameSession(self.sessionCookie, session.cookieHeader) {
+                        // The profile was signed in again, maybe to another Claude account.
+                        self.adoptIfSameUser(session, owner: owner)
+                    } else {
                         self.replaceSessionCookie(session.cookieHeader)
                         self.fetchUsage()
-                    } else if !self.hasFetchedData { self.fetchUsage() }
+                    }
                 }
-            }
-        }
-    }
-
-    func openClaudeInChrome() {
-        guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome"),
-              let url = URL(string: "https://claude.ai/settings/usage") else {
-            chromeMessage = "Google Chrome is not installed. Install Chrome, or use a manual cookie."
-            return
-        }
-        NSWorkspace.shared.open([url], withApplicationAt: chrome,
-                               configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
-            if error != nil {
-                DispatchQueue.main.async { self?.chromeMessage = "Could not open Chrome. Open Claude in Chrome manually and sign in." }
             }
         }
     }
@@ -1190,6 +1315,8 @@ class UsageManager: ObservableObject {
         }
         chromeDetectionEnabled = false
         defaults.set(false, forKey: key("chrome_sync"))
+        signedInHere = false
+        defaults.set(false, forKey: key("web_sign_in"))
         chromeProfileName = nil
         chromeProfiles = []
         chromeMessage = "Using a manual cookie. Detect Chrome Session to enable hourly sync."
@@ -1197,7 +1324,45 @@ class UsageManager: ObservableObject {
         fetchUsage()
     }
 
-    private func replaceSessionCookie(_ cookie: String) {
+    @discardableResult
+    func adoptSignIn(_ header: String, identity: ClaudeAccountIdentity, organizationID: String?) -> Bool {
+        guard !removed else { return false }
+        do {
+            try credentials.write(header, account: accountID)
+        } catch {
+            return false
+        }
+        chromeDetectionEnabled = false
+        defaults.set(false, forKey: key("chrome_sync"))
+        chromeProfileID = nil
+        chromeProfileName = nil
+        defaults.removeObject(forKey: key("chrome_profile_id"))
+        defaults.removeObject(forKey: key("chrome_profile_name"))
+        chromeProfiles = []
+        chromeMessage = nil
+        chromeNeedsAttention = false
+        signedInHere = true
+        defaults.set(true, forKey: key("web_sign_in"))
+        let threshold = lastNotifiedThreshold
+        replaceSessionCookie(header, credentialAlreadySaved: true)
+        lastNotifiedThreshold = threshold
+        defaults.set(threshold, forKey: key("last_notified_threshold"))
+        email = identity.email
+        claudeAccountUUID = identity.accountUUID
+        organizationName = identity.organizationName
+        resolvedOrganizationID = organizationID
+        defaults.set(identity.email, forKey: key("email"))
+        defaults.set(identity.accountUUID, forKey: key("account_uuid"))
+        defaults.set(identity.organizationName, forKey: key("organization_name"))
+        defaults.set(organizationID, forKey: key("organization_id"))
+        identityRequestedFor = ClaudeSessionHeader.identity(header)
+        errorMessage = nil
+        needsSignIn = false
+        fetchUsage()
+        return true
+    }
+
+    private func replaceSessionCookie(_ cookie: String, credentialAlreadySaved: Bool = false) {
         guard !removed else { return }
         invalidateConnection()
         let sameSession = ClaudeSessionHeader.identity(sessionCookie) == ClaudeSessionHeader.identity(cookie)
@@ -1211,8 +1376,9 @@ class UsageManager: ObservableObject {
             clearIdentity()
         }
         sessionCookie = cookie
+        needsSignIn = false
         do {
-            try credentials.write(cookie, account: accountID)
+            if !credentialAlreadySaved { try credentials.write(cookie, account: accountID) }
             credentialNeedsApproval = false
             if defaults.bool(forKey: key("legacy_cookie_pending")) {
                 defaults.removeObject(forKey: ClaudeAccountStore.legacyCookieKey)
@@ -1226,6 +1392,9 @@ class UsageManager: ObservableObject {
 
     func clearSessionCookie() {
         invalidateConnection()
+        signedInHere = false
+        needsSignIn = false
+        defaults.set(false, forKey: key("web_sign_in"))
         chromeDetectionEnabled = false
         chromeProfileName = nil
         chromeProfiles = []
@@ -1247,26 +1416,49 @@ class UsageManager: ObservableObject {
         removed = true
         invalidateConnection()
         sessionCookie = ""
+        needsSignIn = false
         resetUsageData()
     }
 
     // MARK: Account identity
 
-    /// Asks claude.ai who this session belongs to, once per session identity per run.
-    func fetchIdentityIfNeeded() {
-        let identity = ClaudeSessionHeader.identity(sessionCookie)
-        guard !removed, !sessionCookie.isEmpty, identityRequestedFor != identity,
-              let url = URL(string: "https://claude.ai/api/account") else { return }
-        identityRequestedFor = identity
+    static func accountRequest(cookie: String) -> URLRequest? {
+        guard let url = URL(string: "https://claude.ai/api/account") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(sessionCookie, forHTTPHeaderField: "Cookie")
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://claude.ai", forHTTPHeaderField: "Origin")
         request.setValue("https://claude.ai", forHTTPHeaderField: "Referer")
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("claude.ai", forHTTPHeaderField: "authority")
+        return request
+    }
+
+    /// Takes the profile's new session only when it is this Claude user's. Another user's
+    /// session stays in Chrome for Add from Chrome; this account keeps its own.
+    private func adoptIfSameUser(_ session: ChromeSession, owner: String) {
+        guard let request = Self.accountRequest(cookie: session.cookieHeader) else { return }
+        performRequest(request, identity: true) { [weak self] data, response, _ in
+            guard let self = self, !self.removed, (response as? HTTPURLResponse)?.statusCode == 200,
+                  let data = data, let resolved = ClaudeAccountIdentity.parse(data, organizationID: nil) else { return }
+            guard UUID(uuidString: resolved.accountUUID) == UUID(uuidString: owner) else {
+                self.chromeNeedsAttention = true
+                self.chromeMessage = "Chrome profile \(session.profile.name) is now signed in to a different Claude account. This account keeps its saved session; add the other one with Add from Chrome."
+                return
+            }
+            self.replaceSessionCookie(session.cookieHeader)
+            self.fetchUsage()
+        }
+    }
+
+    /// Asks claude.ai who this session belongs to, once per session identity per run.
+    func fetchIdentityIfNeeded() {
+        let identity = ClaudeSessionHeader.identity(sessionCookie)
+        guard !removed, !sessionCookie.isEmpty, identityRequestedFor != identity,
+              let request = Self.accountRequest(cookie: sessionCookie) else { return }
+        identityRequestedFor = identity
         let organization = organizationID
         performRequest(request, identity: true) { [weak self] data, response, _ in
             guard let self = self, !self.removed,
@@ -1379,6 +1571,7 @@ class UsageManager: ObservableObject {
         performRequest(request) { [weak self] data, response, error in
             if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403].contains(status) {
                 self?.resetUsageData()
+                self?.needsSignIn = true
                 self?.errorMessage = "HTTP \(status)"
                 AppDiagnostics.shared.recordFailure(provider: .claude, code: .signIn)
                 completion(nil)
@@ -1624,7 +1817,10 @@ class UsageManager: ObservableObject {
                 } else {
                     self?.menuBarOptions = []
                     if [401, 403].contains(httpResponse.statusCode) {
+                        // Only usage and bootstrap mean a signed-out session; a detail
+                        // endpoint may refuse a member without billing access.
                         self?.resetUsageData()
+                        self?.needsSignIn = true
                     } else {
                         self?.menuBarIsStale = !(self?.menuBarDisplayOptions.isEmpty ?? true)
                     }
@@ -1744,6 +1940,7 @@ class UsageManager: ObservableObject {
             menuBarUpdatedAt = lastUpdated
             errorMessage = nil
             hasFetchedData = true
+            needsSignIn = false
             menuBarOptions = availableWindows
             menuBarDisplayOptions = availableWindows
             menuBarIsStale = false
@@ -1882,29 +2079,56 @@ private let defaultTrackedComponentIdSet: Set<String> = Set(
     defaultTrackedComponents.map { $0.id }.filter { $0 != "c-claude-gov" }
 )
 
+/// Where a provider's service status comes from.
+struct StatusSource {
+    let name: String
+    let endpoint: URL
+    let pageURL: URL
+    // Prefixes the UserDefaults keys; Claude keeps the keys it had before Codex status.
+    let keyPrefix: String
+    // Codex has no full component list to choose from, so every Codex component is tracked.
+    let tracksAllComponents: Bool
+    let decode: (Data) -> StatusSummary?
+
+    // Canonical URL (status.anthropic.com 302-redirects here)
+    static let claude = StatusSource(name: "Claude",
+                                     endpoint: URL(string: "https://status.claude.com/api/v2/summary.json")!,
+                                     pageURL: URL(string: "https://status.claude.com")!,
+                                     keyPrefix: "", tracksAllComponents: false, decode: StatusManager.decode)
+    // OpenAI's Statuspage-style summary.json omits the Codex group; the incident.io widget API has it.
+    static let codex = StatusSource(name: "Codex",
+                                    endpoint: URL(string: "https://status.openai.com/api/v1/summary")!,
+                                    pageURL: URL(string: "https://status.openai.com")!,
+                                    keyPrefix: "codex_", tracksAllComponents: true, decode: StatusManager.decodeCodex)
+}
+
 class StatusManager: ObservableObject {
     @Published var indicator: String = "none"        // none | minor | major | critical (raw, global)
     @Published var statusDescription: String = "All systems operational"
     @Published var incidents: [StatusIncident] = []
-    @Published var allComponents: [StatusComponent] = defaultTrackedComponents
-    @Published var selectedComponentIds: Set<String> = defaultTrackedComponentIdSet
+    @Published var allComponents: [StatusComponent]
+    @Published var selectedComponentIds: Set<String>
     @Published var lastUpdated: Date?
     @Published var hasFetched: Bool = false
 
-    // Canonical URL (status.anthropic.com 302-redirects here)
-    private let endpoint = URL(string: "https://status.claude.com/api/v2/summary.json")!
+    let source: StatusSource
     private let defaults: UserDefaults
     private let notify: (String, String) -> Void
+    private var lastIndicatorKey: String { source.keyPrefix + "last_effective_indicator" }
 
-    init(defaults: UserDefaults = .standard, notify: @escaping (String, String) -> Void = { title, body in
+    init(source: StatusSource = .claude, defaults: UserDefaults = .standard, notify: @escaping (String, String) -> Void = { title, body in
         let notification = NSUserNotification()
         notification.title = title
         notification.informativeText = body
         notification.soundName = NSUserNotificationDefaultSoundName
         NSUserNotificationCenter.default.deliver(notification)
     }) {
+        self.source = source
         self.defaults = defaults
         self.notify = notify
+        allComponents = source.tracksAllComponents ? [] : defaultTrackedComponents
+        selectedComponentIds = source.tracksAllComponents ? [] : defaultTrackedComponentIdSet
+        guard !source.tracksAllComponents else { return }
         if let saved = defaults.array(forKey: "tracked_component_ids") as? [String] {
             selectedComponentIds = Set(saved)
         }
@@ -1913,6 +2137,7 @@ class StatusManager: ObservableObject {
     }
 
     func toggleComponent(_ id: String) {
+        guard !source.tracksAllComponents else { return }
         if selectedComponentIds.contains(id) {
             selectedComponentIds.remove(id)
         } else {
@@ -1922,7 +2147,7 @@ class StatusManager: ObservableObject {
     }
 
     func isTracked(_ id: String) -> Bool {
-        selectedComponentIds.contains(id)
+        source.tracksAllComponents || selectedComponentIds.contains(id)
     }
 
     // MARK: - Visible views (tracked components, posts at most six hours old)
@@ -1930,7 +2155,7 @@ class StatusManager: ObservableObject {
     private func trackedIncidents() -> [StatusIncident] {
         incidents.filter { incident in
             guard !incident.componentIds.isEmpty else { return true }
-            return incident.componentIds.contains(where: { selectedComponentIds.contains($0) })
+            return incident.componentIds.contains(where: isTracked)
         }
     }
 
@@ -1942,7 +2167,7 @@ class StatusManager: ObservableObject {
         let fresh = Set(visibleIncidents(now: now).flatMap(\.componentIds))
         let expired = Set(incidents.filter { StatusFreshness.isExpired($0.updatedAt, now: now) }.flatMap(\.componentIds))
         return allComponents.filter { component in
-            guard selectedComponentIds.contains(component.id), component.status != "operational" else { return false }
+            guard isTracked(component.id), component.status != "operational" else { return false }
             if fresh.contains(component.id) { return true }
             if let updated = component.updatedAt { return !StatusFreshness.isExpired(updated, now: now) }
             return !expired.contains(component.id)
@@ -1955,14 +2180,18 @@ class StatusManager: ObservableObject {
 
     // The tracked indicator before expiry, used to keep expiry silent.
     private var trackedIndicator: String {
-        indicatorLevel(for: allComponents.filter { selectedComponentIds.contains($0.id) })
+        indicatorLevel(for: allComponents.filter { isTracked($0.id) })
     }
 
     var filteredIncidents: [StatusIncident] { visibleIncidents() }
     var filteredAffectedComponents: [StatusComponent] { visibleAffectedComponents() }
 
     private func indicatorLevel(for components: [StatusComponent]) -> String {
-        switch components.map({ severity(for: $0.status) }).max() ?? 0 {
+        Self.indicator(forSeverity: components.map({ Self.severity(for: $0.status) }).max() ?? 0)
+    }
+
+    private static func indicator(forSeverity severity: Int) -> String {
+        switch severity {
         case 0:  return "none"
         case 1:  return "minor"
         case 2:  return "major"
@@ -1970,7 +2199,7 @@ class StatusManager: ObservableObject {
         }
     }
 
-    private func severity(for componentStatus: String) -> Int {
+    private static func severity(for componentStatus: String) -> Int {
         switch componentStatus {
         case "operational":          return 0
         case "under_maintenance":    return 1
@@ -1982,9 +2211,10 @@ class StatusManager: ObservableObject {
     }
 
     func fetch() {
-        let request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        let request = URLRequest(url: source.endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        let decode = source.decode
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            guard let data = data, let summary = Self.decode(data) else { return }
+            guard let data = data, let summary = decode(data) else { return }
             DispatchQueue.main.async { self?.apply(summary) }
         }.resume()
     }
@@ -2032,13 +2262,86 @@ class StatusManager: ObservableObject {
         return StatusSummary(indicator: indicator, description: desc, incidents: incidents, components: components)
     }
 
+    private static func date(_ value: Any?) -> Date? {
+        guard let text = value as? String else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: text) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: text)
+    }
+
+    /// Codex's part of OpenAI's incident.io widget API (`/api/v1/summary`): incidents and running
+    /// maintenance that list a Codex component, with only those components.
+    static func decodeCodex(_ data: Data) -> StatusSummary? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ongoing = json["ongoing_incidents"] as? [[String: Any]] else { return nil }
+        let maintenances = json["in_progress_maintenances"] as? [[String: Any]] ?? []
+        func isCodex(_ component: [String: Any]) -> Bool {
+            (component["group_name"] as? String)?.caseInsensitiveCompare("Codex") == .orderedSame
+                || (component["name"] as? String)?.localizedCaseInsensitiveContains("Codex") == true
+        }
+        // incident.io says full_outage where Statuspage says major_outage.
+        func status(_ raw: Any?) -> String {
+            let value = raw as? String ?? "operational"
+            if value == "full_outage" { return "major_outage" }
+            return ["degraded_performance", "partial_outage", "under_maintenance"].contains(value) ? value : "operational"
+        }
+
+        var incidents: [StatusIncident] = []
+        var components: [StatusComponent] = []
+        for (entry, isMaintenance) in ongoing.map({ ($0, false) }) + maintenances.map({ ($0, true) }) {
+            guard let id = entry["id"] as? String, let name = entry["name"] as? String,
+                  let entryStatus = entry["status"] as? String else { continue }
+            let updatedAt = date(entry["last_update_at"])
+            let affected = (entry["affected_components"] as? [[String: Any]] ?? []).compactMap { raw -> StatusComponent? in
+                guard isCodex(raw), let id = raw["id"] as? String, let name = raw["name"] as? String else { return nil }
+                return StatusComponent(id: id, name: name, status: status(raw["current_status"]), updatedAt: updatedAt)
+            }
+            guard !affected.isEmpty else { continue }
+            incidents.append(StatusIncident(
+                id: id, name: name, status: isMaintenance ? "maintenance" : entryStatus,
+                latestUpdate: entry["last_update_message"] as? String ?? "",
+                updatedAt: updatedAt,
+                componentIds: affected.map(\.id)
+            ))
+            for component in affected {
+                guard let index = components.firstIndex(where: { $0.id == component.id }) else {
+                    components.append(component)
+                    continue
+                }
+                let existing = components[index]
+                let worse = severity(for: component.status) > severity(for: existing.status)
+                let latest = [existing.updatedAt, component.updatedAt].compactMap { $0 }.max()
+                components[index] = StatusComponent(id: existing.id, name: existing.name,
+                                                    status: worse ? component.status : existing.status,
+                                                    updatedAt: latest)
+            }
+        }
+        let worst = components.map { severity(for: $0.status) }.max() ?? 0
+        let worstStatus = components.max { severity(for: $0.status) < severity(for: $1.status) }?.status
+        let description: String
+        switch worst == 0 ? nil : worstStatus {
+        case "degraded_performance": description = "Degraded performance"
+        case "under_maintenance": description = "Under maintenance"
+        case "partial_outage": description = "Partial outage"
+        case "major_outage": description = "Major outage"
+        default: description = "All systems operational"
+        }
+        return StatusSummary(indicator: indicator(forSeverity: worst), description: description,
+                             incidents: incidents, components: components)
+    }
+
     func apply(_ summary: StatusSummary, now: Date = Date()) {
         let isFirstFetch = !hasFetched
 
         indicator = summary.indicator
         statusDescription = summary.description
         incidents = summary.incidents
-        if !summary.components.isEmpty {
+        if source.tracksAllComponents {
+            // The feed lists only affected components; an empty list means they recovered.
+            allComponents = summary.components
+        } else if !summary.components.isEmpty {
             allComponents = summary.components
             // First time we see real components: track all except Claude for Government by default
             if defaults.array(forKey: "tracked_component_ids") == nil {
@@ -2055,20 +2358,20 @@ class StatusManager: ObservableObject {
         // Notify on transitions of the visible indicator. Expiry hides an alert
         // without announcing a recovery the status page has not posted.
         let effective = effectiveIndicator(now: now)
-        let previous = defaults.string(forKey: "last_effective_indicator")
+        let previous = defaults.string(forKey: lastIndicatorKey)
         let expiredOnly = effective == "none" && trackedIndicator != "none"
         if !isFirstFetch, let previous = previous, previous != effective, !expiredOnly {
             notifyStatusChange(to: effective, description: summary.description)
         }
-        defaults.set(effective, forKey: "last_effective_indicator")
+        defaults.set(effective, forKey: lastIndicatorKey)
     }
 
     private func notifyStatusChange(to indicator: String, description: String) {
         guard defaults.bool(forKey: "status_notifications_enabled") else { return }
         if indicator == "none" {
-            notify("Claude is back online", "All systems operational")
+            notify("\(source.name) is back online", "All systems operational")
         } else {
-            notify("Claude status: \(description)", "Visit status.claude.com for details")
+            notify("\(source.name) status: \(description)", "Visit \(source.pageURL.host ?? "the status page") for details")
         }
         NSLog("📬 Sent status-change notification: \(indicator)")
     }
@@ -2117,9 +2420,11 @@ class UpdateManager: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
+    // download.innolope.com hosts the installers, so an update banner can link to them.
     private static let allowedHostSuffixes = [
         "github.com",
-        "claudeusagebar.com"
+        "claudeusagebar.com",
+        "download.innolope.com"
     ]
 
     static func isSafeURL(_ url: URL) -> Bool {
@@ -2457,6 +2762,7 @@ struct UsageView: View {
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
     @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
+    @ObservedObject var codexStatusManager: StatusManager = StatusManager(source: .codex)
     @ObservedObject var popupPresentation: PopupPresentation = PopupPresentation()
     @ObservedObject var menuBarPreferences: MenuBarPreferences = MenuBarPreferences()
     // Lets the offline preview renderer capture the Settings page.
@@ -2465,6 +2771,7 @@ struct UsageView: View {
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingStatusDetails: Bool = false
+    @State private var showingCodexStatusDetails: Bool = false
     @State private var pendingRemoval: String?
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance_mode") private var appearanceMode: String = "system"
@@ -2548,10 +2855,21 @@ struct UsageView: View {
                         .controlSize(.small)
                         .scaleEffect(0.7)
                 }
+                GlassMenuButton(symbol: "plus", help: "Add Claude Account", items: [
+                    GlassMenuItem(title: "Sign In to Claude…") {
+                        ClaudeSignInWindowController.show(accounts: claude)
+                    },
+                    GlassMenuItem(title: "Add from Chrome", enabled: !claude.isDetectingChrome) {
+                        openSettings()
+                        claude.detectChromeSessions(interactive: true)
+                    },
+                    GlassMenuItem(title: "Manual Cookie…") {
+                        showingCookieInput = true
+                        openSettings()
+                    },
+                ])
                 GlassIconButton(symbol: "arrow.clockwise", help: "Refresh") { refresh() }
-                GlassIconButton(symbol: "gearshape", help: "Settings") {
-                    withAnimation(.easeInOut(duration: 0.25)) { showingSettings = true }
-                }
+                GlassIconButton(symbol: "gearshape", help: "Settings") { openSettings() }
             }
 
             banners
@@ -2562,7 +2880,7 @@ struct UsageView: View {
             }
             CodexUsageView(manager: codexManager, mode: menuBarPreferences.percentageMode)
 
-            if statusManager.hasFetched {
+            if statusManager.hasFetched || codexStatusManager.hasFetched {
                 serviceStatus
             }
 
@@ -2573,6 +2891,10 @@ struct UsageView: View {
                     .padding(.horizontal, 4)
             }
         }
+    }
+
+    private func openSettings() {
+        withAnimation(.easeInOut(duration: 0.25)) { showingSettings = true }
     }
 
     private var lastUpdated: Date? {
@@ -2586,6 +2908,7 @@ struct UsageView: View {
         claude.accounts.forEach { $0.refreshAllowingKeychainApproval() }
         codexManager.fetchUsage()
         statusManager.fetch()
+        codexStatusManager.fetch()
         updateManager.fetch()
     }
 
@@ -2692,14 +3015,14 @@ struct UsageView: View {
                 if account.credentialNeedsApproval {
                     keychainApprovalButton(account)
                 } else {
-                    chromeConnectionControls(account)
+                    connectionControls(account)
                 }
             }
         }
         .glassCard()
     }
 
-    // Before any account exists: find one in Chrome.
+    // Before any account exists: sign in here, or find a session in Chrome.
     private var claudeConnectCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             ProviderHeader(name: "Claude", color: Brand.claude, detail: nil)
@@ -2710,20 +3033,20 @@ struct UsageView: View {
                         Text("Reading Claude sessions from Chrome…").font(.caption)
                     }
                 } else {
-                    Text(claude.chromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                    Text(claude.chromeMessage ?? "Sign in to Claude here, or detect a session you already have in Chrome.")
                         .font(.caption)
                         .foregroundColor(Color.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 safeStorageNote
                 HStack(spacing: 6) {
+                    Button("Sign In to Claude") { ClaudeSignInWindowController.show(accounts: claude) }
+                        .prominentButton(tint: Brand.claude)
                     Button(claude.isDetectingChrome ? "Detecting…" : "Detect Chrome Session") {
                         claude.detectChromeSessions(interactive: true)
                     }
                     .disabled(claude.isDetectingChrome)
-                    .prominentButton(tint: Brand.claude)
-                    Button("Open Claude in Chrome") { claude.openClaudeInChrome() }
-                        .secondaryButton()
+                    .secondaryButton()
                 }
                 .controlSize(.small)
                 chromeChoices
@@ -2867,10 +3190,31 @@ struct UsageView: View {
             }
             .disabled(account.isDetectingChrome)
             .prominentButton(tint: Brand.claude)
-            Button("Open Claude in Chrome") { account.openClaudeInChrome() }
+            // Renews this account in place when the same Claude user signs in.
+            Button("Sign In Here") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
                 .secondaryButton()
         }
         .controlSize(.small)
+    }
+
+    // An account signed in here renews by signing in again; the others use Chrome.
+    @ViewBuilder
+    private func connectionControls(_ account: UsageManager) -> some View {
+        if account.signedInHere {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(account.needsSignIn
+                     ? "claude.ai ended this session. Sign in again to keep tracking this account."
+                     : "Sign in again if this account stays disconnected.")
+                    .font(.caption)
+                    .foregroundColor(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Sign In Again") { ClaudeSignInWindowController.show(accounts: claude, expectedEmail: account.email) }
+                    .prominentButton(tint: Brand.claude)
+                    .controlSize(.small)
+            }
+        } else {
+            chromeConnectionControls(account)
+        }
     }
 
     private func chromeConnectionControls(_ account: UsageManager) -> some View {
@@ -2881,7 +3225,7 @@ struct UsageView: View {
                     Text("Reading Claude sessions from Chrome…").font(.caption)
                 }
             } else {
-                Text(account.settingsChromeMessage ?? "Sign in to claude.ai in Chrome, then detect the session.")
+                Text(account.settingsChromeMessage ?? "Sign in to claude.ai in Chrome and detect the session, or sign in here.")
                     .font(.caption)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2902,13 +3246,32 @@ struct UsageView: View {
         }
     }
 
-    // Anthropic service status (compact; expandable on issue)
+    // Claude and Codex service status (compact; each row expands on an issue)
     private var serviceStatus: some View {
-        let effective = statusManager.effectiveIndicator(now: Date())
-        let filteredIncidents = statusManager.filteredIncidents
-        let filteredAffected = statusManager.filteredAffectedComponents
-        let hasIssue = effective != "none"
-            && (!filteredIncidents.isEmpty || !filteredAffected.isEmpty)
+        VStack(alignment: .leading, spacing: 10) {
+            if statusManager.hasFetched {
+                statusRow(statusManager, expanded: $showingStatusDetails)
+            }
+            if statusManager.hasFetched && codexStatusManager.hasFetched {
+                Divider().opacity(0.5)
+            }
+            if codexStatusManager.hasFetched {
+                statusRow(codexStatusManager, expanded: $showingCodexStatusDetails)
+            }
+        }
+        .glassCard(tint: hasStatusIssue(statusManager) || hasStatusIssue(codexStatusManager) ? .orange : nil, padding: 12)
+    }
+
+    private func hasStatusIssue(_ sm: StatusManager) -> Bool {
+        sm.hasFetched && sm.effectiveIndicator(now: Date()) != "none"
+            && (!sm.filteredIncidents.isEmpty || !sm.filteredAffectedComponents.isEmpty)
+    }
+
+    private func statusRow(_ sm: StatusManager, expanded: Binding<Bool>) -> some View {
+        let effective = sm.effectiveIndicator(now: Date())
+        let filteredIncidents = sm.filteredIncidents
+        let filteredAffected = sm.filteredAffectedComponents
+        let hasIssue = hasStatusIssue(sm)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
@@ -2918,12 +3281,12 @@ struct UsageView: View {
                     .shadow(color: statusColor(for: effective).opacity(0.8), radius: 4)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(effective == "none"
-                         ? "Claude services operational"
-                         : statusManager.statusDescription)
+                         ? "\(sm.source.name) services operational"
+                         : "\(sm.source.name): \(sm.statusDescription)")
                         .font(.caption.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     if hasIssue {
-                        Text(statusContextLine(for: statusManager))
+                        Text(statusContextLine(for: sm))
                             .font(.system(size: 10))
                             .foregroundColor(Color.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2931,10 +3294,10 @@ struct UsageView: View {
                 }
                 Spacer()
                 if hasIssue {
-                    Button(action: { showingStatusDetails.toggle() }) {
+                    Button(action: { expanded.wrappedValue.toggle() }) {
                         HStack(spacing: 2) {
-                            Text(showingStatusDetails ? "Hide" : "Details")
-                            Image(systemName: showingStatusDetails ? "chevron.up" : "chevron.down")
+                            Text(expanded.wrappedValue ? "Hide" : "Details")
+                            Image(systemName: expanded.wrappedValue ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 8))
                         }
                         .font(.caption2)
@@ -2943,7 +3306,7 @@ struct UsageView: View {
                 }
             }
 
-            if hasIssue && showingStatusDetails {
+            if hasIssue && expanded.wrappedValue {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(filteredIncidents) { incident in
                         VStack(alignment: .leading, spacing: 6) {
@@ -3001,14 +3364,14 @@ struct UsageView: View {
                     Divider()
 
                     HStack {
-                        if let lastCheck = statusManager.lastUpdated {
+                        if let lastCheck = sm.lastUpdated {
                             Text("Checked \(relativeTime(lastCheck))")
                                 .font(.caption2)
                                 .foregroundColor(Color.secondaryText)
                         }
                         Spacer()
                         Button(action: {
-                            NSWorkspace.shared.open(URL(string: "https://status.claude.com")!)
+                            NSWorkspace.shared.open(sm.source.pageURL)
                         }) {
                             Text("Open status page →")
                                 .font(.caption2)
@@ -3019,7 +3382,6 @@ struct UsageView: View {
                 .padding(.top, 4)
             }
         }
-        .glassCard(tint: hasIssue ? .orange : nil, padding: 12)
     }
 
     // MARK: Settings
@@ -3202,16 +3564,14 @@ struct UsageView: View {
             Spacer(minLength: 8)
             Toggle(title, isOn: isOn)
                 .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .tint(Brand.claude)
+                .toggleStyle(BrandSwitchStyle())
         }
     }
 
     private var claudeAccountsSettings: some View {
         VStack(alignment: .leading, spacing: 10) {
             if claude.accounts.isEmpty {
-                Text("No Claude account yet. Add one from Chrome, or paste a cookie.")
+                Text("No Claude account yet. Sign in, add one from Chrome, or paste a cookie.")
                     .font(.caption)
                     .foregroundColor(Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3233,12 +3593,14 @@ struct UsageView: View {
             }
             chromeChoices
             HStack(spacing: 6) {
+                Button("Sign In…") { ClaudeSignInWindowController.show(accounts: claude) }
+                    .prominentButton(tint: Brand.claude)
                 Button(claude.isDetectingChrome ? "Detecting…" : "Add from Chrome") {
                     claude.detectChromeSessions(interactive: true)
                 }
                 .disabled(claude.isDetectingChrome)
                 .secondaryButton()
-                Button(showingCookieInput ? "Hide Manual Cookie" : "Add Manual Cookie") {
+                Button(showingCookieInput ? "Hide Cookie" : "Manual Cookie") {
                     showingCookieInput.toggle()
                 }
                 .secondaryButton()
@@ -3249,7 +3611,8 @@ struct UsageView: View {
     }
 
     private func claudeAccountSource(_ account: UsageManager) -> String {
-        var parts = [account.chromeDetectionEnabled
+        var parts = [account.signedInHere ? "Signed in with LimitFuel"
+            : account.chromeDetectionEnabled
             ? "Chrome · \(account.chromeProfileName ?? account.chromeProfileID ?? "profile")"
             : "Manual cookie"]
         if let organization = account.organizationName { parts.append(organization) }
@@ -3310,7 +3673,7 @@ struct UsageView: View {
                 keychainApprovalButton(account)
             } else if !account.hasFetchedData {
                 if let error = account.errorMessage { WarningNote(text: error) }
-                chromeConnectionControls(account)
+                connectionControls(account)
             } else if let message = account.settingsChromeMessage {
                 WarningNote(text: message)
             }
@@ -3397,7 +3760,7 @@ struct UsageView: View {
     }
 
     func statusContextLine(for sm: StatusManager) -> String {
-        let tracked = sm.allComponents.filter { sm.selectedComponentIds.contains($0.id) }
+        let tracked = sm.allComponents.filter { sm.isTracked($0.id) }
         let trackedNames = tracked.prefix(4).map { shortName($0.name) }.joined(separator: ", ")
         let extra = tracked.count > 4 ? " +\(tracked.count - 4)" : ""
         let trackedSummary = tracked.isEmpty ? "No services tracked" : "Tracks \(trackedNames)\(extra)"

@@ -37,12 +37,23 @@ import SwiftUI
                                       resetsAt: Date().addingTimeInterval(86400)))
         ])
         codex.lastUpdated = Date()
+        // A healthy Claude page and a synthetic Codex incident, so both status rows render.
+        let claudeStatus = StatusManager(defaults: defaults, notify: { _, _ in })
+        claudeStatus.apply(StatusSummary(indicator: "none", description: "All Systems Operational", incidents: [], components: []))
+        let codexStatus = StatusManager(source: .codex, defaults: defaults, notify: { _, _ in })
+        let posted = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
+        codexStatus.apply(StatusManager.decodeCodex(Data(#"""
+            {"ongoing_incidents":[{"id":"preview","name":"Elevated errors in Codex CLI","status":"identified",
+             "last_update_at":"\#(posted)","last_update_message":"A fix is rolling out.",
+             "affected_components":[{"id":"cli","name":"CLI","group_name":"Codex","current_status":"degraded_performance"}]}]}
+            """#.utf8))!)
         for (page, settings) in [("popup", false), ("settings", true)] {
             for dark in [false, true] {
                 NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 let view = UsageView(claude: claude, settings: AppSettings(defaults: defaults),
-                                     statusManager: StatusManager(),
+                                     statusManager: claudeStatus,
                                      updateManager: UpdateManager(), codexManager: codex,
+                                     codexStatusManager: codexStatus,
                                      startsInSettings: settings)
                 let host = NSHostingView(rootView: view)
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 600),

@@ -45,6 +45,7 @@ private func settle() { RunLoop.current.run(until: Date().addingTimeInterval(0.1
 private let organization = "11111111-2222-4333-8444-555555555555"
 private let otherOrganization = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
 private let identityUUID = "12345678-1234-4234-8234-123456789ABC"
+private let otherUser = "87654321-4321-4321-8321-CBA987654321"
 private func cookie(_ session: String, org: String = organization) -> String {
     "sessionKey=synthetic-\(session); lastActiveOrg=\(org)"
 }
@@ -331,6 +332,7 @@ private final class ChromeGate {
         try migrationBranches(base)
         try manualAdds(base)
         try chromeDiscovery(base)
+        try pinnedProfileSwitchedUser(base)
         try removeAndRetry(base)
         try removedHTTPReplies(base)
         try removedChromeReply(base)
@@ -592,13 +594,54 @@ private final class ChromeGate {
             wait("already-used session detection") { !accounts.isDetectingChrome }
             check(accounts.accounts.count == 1 && accounts.chromeChoices.isEmpty && f.store.writes.count == 1, "used session is never offered again")
         }
+        // 2026-11-01 spec correction: Chrome keeps one claude.ai sign-in per profile. Signing in to
+        // another Claude account in a pinned profile makes that profile's new session addable.
         try withFixture(base) { f in
             f.seed("pinned", header: cookie("older"), sync: true, profile: "Default")
-            try chromeDB(f.root, session: "rotated")
+            try chromeDB(f.root, session: "other")
+            f.server.fetch(cookie("other"), identity: Reply(data: identity(email: "support@example.test", uuid: otherUser)))
             let accounts = f.load()
             accounts.detectChromeSessions(interactive: true)
-            wait("pinned profile excluded even after session rotation") { !accounts.isDetectingChrome }
-            check(accounts.accounts.count == 1 && accounts.chromeChoices.isEmpty && f.store.writes.isEmpty, "a pinned profile is not a second-account candidate")
+            wait("another sign-in in a pinned profile is added") {
+                accounts.accounts.count == 2 && accounts.accounts[1].email == "support@example.test"
+            }
+            check(f.defaults.string(forKey: key(accounts.accounts[1].accountID, "chrome_profile_id")) == "Default",
+                  "the new account is pinned to the profile it came from")
+            check(f.store.contents["pinned"] == cookie("older"), "adding never touches the pinned account's session")
+            accounts.detectChromeSessions(interactive: true)
+            wait("second detection") { !accounts.isDetectingChrome }
+            check(accounts.accounts.count == 2 && accounts.chromeMessage?.contains("one claude.ai sign-in per profile") == true,
+                  "nothing new explains one sign-in per Chrome profile")
+        }
+    }
+
+    // An account refreshes from its profile only while that profile holds the same Claude user.
+    static func pinnedProfileSwitchedUser(_ base: URL) throws {
+        for sameUser in [true, false] {
+            try withFixture(base) { f in
+                f.seed("owner", header: cookie("mine"), sync: true, profile: "Default")
+                f.defaults.set(identityUUID, forKey: key("owner", "account_uuid"))
+                try chromeDB(f.root, session: "theirs")
+                f.server.expect(.identity, cookie("theirs"), Reply(data: identity(uuid: sameUser ? identityUUID.lowercased() : otherUser)))
+                if sameUser { f.server.fetch(cookie("theirs")) }
+                let accounts = f.load(), owner = accounts.accounts[0]
+                owner.detectChromeSession()
+                if sameUser {
+                    wait("same user's new session adopted") {
+                        f.store.contents["owner"]?.contains("synthetic-theirs") == true && owner.hasFetchedData
+                            && f.server.count(.identity) == 2
+                    }
+                } else {
+                    wait("other user's session checked") { f.server.count(.identity) == 1 && !owner.isDetectingChrome }
+                    settle()
+                    check(f.store.contents["owner"] == cookie("mine") && owner.sessionHeader == cookie("mine"),
+                          "another Claude user's session never replaces this account's")
+                    check(f.defaults.string(forKey: key("owner", "account_uuid")) == identityUUID,
+                          "the account keeps its identity")
+                    check(owner.chromeMessage?.contains("different Claude account") == true,
+                          "the account explains the profile switched users")
+                }
+            }
         }
     }
 

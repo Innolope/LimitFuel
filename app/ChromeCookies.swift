@@ -41,7 +41,7 @@ enum ChromeCookieError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unavailable: return "Chrome profiles are unavailable. Open Claude in Chrome and sign in, then detect again."
+        case .unavailable: return "Chrome profiles are unavailable. Sign in to Claude here, or sign in in Chrome and detect again."
         case .database: return "Chrome cookie storage could not be read completely. Quit Chrome and try detecting again, or use a manual cookie."
         case .keychain: return "Chrome Safe Storage is locked or access was denied. Click Detect Chrome Session to allow Keychain access, or use a manual cookie."
         case .encryption: return "Chrome cookies use an unsupported or damaged encryption format. Sign in again in Chrome, or use a manual cookie."
@@ -307,7 +307,7 @@ struct ChromeCookieReader {
         return hasSession
     }
 
-    private static func validPair(name: String, value: String) -> Bool {
+    static func validPair(name: String, value: String) -> Bool {
         !name.isEmpty && name.utf8.allSatisfy {
             $0 > 32 && $0 < 127 && !Array("()<>@,;:\\\"/[]?={} ".utf8).contains($0)
         } && value.utf8.allSatisfy {
