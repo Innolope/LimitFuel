@@ -31,6 +31,26 @@ private final class ClaudeSignInOffline: URLProtocol {
     }
     override func stopLoading() {}
 }
+private final class FocusableProbe: NSView {
+    override var acceptsFirstResponder: Bool { true }
+}
+// The popover opens with nothing focused, but a text field being typed in keeps its focus.
+private func verifyPopupFocus(source: String) {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+    let control = FocusableProbe(frame: NSRect(x: 0, y: 0, width: 40, height: 20))
+    let field = NSTextField(frame: NSRect(x: 0, y: 40, width: 160, height: 22))
+    window.contentView?.addSubview(control)
+    window.contentView?.addSubview(field)
+    require(window.makeFirstResponder(control), "Focus probe must accept focus")
+    PopupFocus.clearInitialFocus(in: window)
+    require(window.firstResponder === window, "Popover must open with no control focused")
+    require(window.makeFirstResponder(field) && window.firstResponder is NSText, "Text field must take focus")
+    PopupFocus.clearInitialFocus(in: window)
+    require(window.firstResponder is NSText, "A focused text field must keep its focus")
+    window.close()
+    require(source.components(separatedBy: "PopupFocus.clearInitialFocus(in: window)").count == 3,
+            "popoverDidShow must clear the initial focus now and on the next turn")
+}
 private func verifySignInWindow(reader: ChromeCookieReader) {
     let suite = "LimitFuel.ClaudeNativeVerifier.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
@@ -283,6 +303,7 @@ struct ClaudeNativePresentationAcceptance {
         if chromeButtons(disconnected.0).isEmpty {
             print("LIMITATION: SwiftUI Chrome button AX inventory unavailable; disconnected recovery verified by source use-site and native document expansion")
         }
+        verifyPopupFocus(source: source)
         verifySignInWindow(reader: reader)
         print("Native Claude presentation acceptance passed")
     }

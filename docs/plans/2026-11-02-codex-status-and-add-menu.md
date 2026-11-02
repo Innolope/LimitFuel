@@ -10,6 +10,12 @@ A `+` glass button left of Refresh in the popup header opens a menu:
   a detection runs.
 - **Manual Cookie…** opens Settings with the cookie field shown.
 
+With keyboard navigation on (System Settings → Keyboard), macOS focuses the popover's first control
+when it opens, which put a focus ring on `+`. `popoverDidShow` clears that initial focus, now and on
+the next run-loop turn, unless a text field holds it; Tab still moves focus through the controls.
+An app-bundle harness opened through `AppDelegate.openPopover` showed `KeyViewProxy` focused and the
+ring before, and the popover window as first responder with no ring after.
+
 ## Codex status
 
 OpenAI's status page (incident.io) has a Codex group: Codex Web, Codex API, CLI, VS Code extension;

@@ -304,6 +304,17 @@ struct GlassIconButton: View {
     }
 }
 
+/// With keyboard navigation on, macOS focuses the popover's first control when it opens and
+/// draws a focus ring around the + button. The popover opens with nothing focused instead;
+/// Tab still moves focus through the controls.
+enum PopupFocus {
+    static func clearInitialFocus(in window: NSWindow) {
+        // A text field the user is typing in keeps its focus.
+        guard !(window.firstResponder is NSText) else { return }
+        window.makeFirstResponder(nil)
+    }
+}
+
 struct GlassMenuItem {
     let title: String
     var enabled = true
@@ -758,6 +769,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // A retained hosting controller does not necessarily receive onAppear
         // again. Signal each actual presentation after its window is attached.
         popupPresentation.beginPresentation()
+        if let window = popover.contentViewController?.view.window {
+            PopupFocus.clearInitialFocus(in: window)
+            // SwiftUI may settle its focus after the show; check once more on the next turn.
+            DispatchQueue.main.async { PopupFocus.clearInitialFocus(in: window) }
+        }
     }
 
     func popoverDidClose(_ notification: Notification) {
