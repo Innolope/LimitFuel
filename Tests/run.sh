@@ -129,7 +129,7 @@ compile_acceptance "DiagnosticsTests" "diagnostics-tests"
 
 # Status alert expiry, meter mode, pickers, Codex account race, Claude
 # connection state and legacy settings migration (spec-first, 2026-10-12).
-for SUITE in StatusExpiryTests CodexStatusTests MeterModeTests CodexAccountRaceTests ClaudeSettingsConnectionTests LegacySettingsMigrationTests LaunchGateTests; do
+for SUITE in StatusExpiryTests CodexStatusTests UpdateLinkTests MeterModeTests CodexAccountRaceTests ClaudeSettingsConnectionTests LegacySettingsMigrationTests LaunchGateTests; do
     compile_acceptance "$SUITE" "$SUITE"
     CLAUDE_TEST_TMPDIR="$BUILD" LIMITFUEL_ASSET_DIR="$REPO/app/Assets" "$BUILD/$SUITE"
 done

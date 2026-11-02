@@ -2420,9 +2420,11 @@ class UpdateManager: ObservableObject {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
+    // download.innolope.com hosts the installers, so an update banner can link to them.
     private static let allowedHostSuffixes = [
         "github.com",
-        "claudeusagebar.com"
+        "claudeusagebar.com",
+        "download.innolope.com"
     ]
 
     static func isSafeURL(_ url: URL) -> Bool {

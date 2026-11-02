@@ -50,7 +50,8 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 
 ## 🚀 Installation
 
-Build this fork locally; a LimitFuel notarized installer has not been published.
+Download the signed and notarized [LimitFuel.dmg](https://download.innolope.com/limitfuel/LimitFuel.dmg) (checksums in
+[SHA256SUMS](https://download.innolope.com/limitfuel/SHA256SUMS)), or build it locally:
 
 ```bash
 cd app

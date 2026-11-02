@@ -9,11 +9,15 @@ A lightweight, open-source macOS menu bar application that displays Claude and C
 
 ## 📥 Download
 
-Build this fork with `cd app && ./build.sh --local`. The app is created at
-`app/build/LimitFuel.app`. Fork changes have not been released as a notarized installer.
-Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar).
+- **macOS 12 or later**, Apple Silicon and Intel: [LimitFuel.dmg](https://download.innolope.com/limitfuel/LimitFuel.dmg), signed and notarized.
+- **Windows 10 or 11** (beta, not code-signed yet): [LimitFuel-Setup-x64.exe](https://download.innolope.com/limitfuel/LimitFuel-Setup-x64.exe).
+  See [Windows (Beta)](linux/README.md#windows-beta).
+- **Linux** tray app: [AppImage](https://download.innolope.com/limitfuel/LimitFuel-x86_64.AppImage), [.deb](https://download.innolope.com/limitfuel/LimitFuel-amd64.deb),
+  [.rpm](https://download.innolope.com/limitfuel/LimitFuel-x86_64.rpm). See [`linux/`](linux/README.md).
 
-**Linux:** a tray version with the same Claude and Codex tracking lives in [`linux/`](linux/README.md). CI builds an AppImage, a `.deb` and an `.rpm`.
+Checksums: [SHA256SUMS](https://download.innolope.com/limitfuel/SHA256SUMS). To build the macOS app yourself, run
+`cd app && ./build.sh --local`; the app is created at `app/build/LimitFuel.app`.
+Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/ClaudeUsageBar).
 
 ## 📦 Set Up (1mn)
 
