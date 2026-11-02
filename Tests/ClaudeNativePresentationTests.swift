@@ -211,6 +211,20 @@ struct ClaudeNativePresentationAcceptance {
         require(controls.contains("if account.signedInHere {") && controls.contains("Sign In Again") && controls.contains("chromeConnectionControls(account)"), "Signed-in accounts renew by signing in; the others keep Chrome controls")
         require(declaration("private func chromeConnectionControls(_ account: UsageManager) -> some View").contains("chromeButtons(account)"), "Shared connection controls must include Chrome actions")
         require(declaration("private func chromeButtons(_ account: UsageManager) -> some View").contains("Sign In Here"), "Chrome actions must offer signing in here")
+        let dashboardSource = declaration("private var dashboard: some View")
+        require(dashboardSource.contains("GlassMenuButton(symbol: \"plus\"") && ["Sign In to Claude…", "Add from Chrome", "Manual Cookie…"].allSatisfy(dashboardSource.contains),
+                "Popup header must offer every way to add a Claude account")
+        var chosen: [String] = []
+        let menuAnchor = GlassMenuAnchor() // menu items hold their target weakly
+        let addMenu = menuAnchor.menu(for: [
+            GlassMenuItem(title: "First") { chosen.append("First") },
+            GlassMenuItem(title: "Second", enabled: false) { chosen.append("Second") },
+        ])
+        require(addMenu.items.map(\.title) == ["First", "Second"] && addMenu.items[0].isEnabled && !addMenu.items[1].isEnabled,
+                "Glass menu must keep item titles and enabled states")
+        addMenu.performActionForItem(at: 0)
+        require(chosen == ["First"], "Glass menu item must run its own action")
+        withExtendedLifetime(menuAnchor) {}
         let normal = state("connected-weekly-absent")
         for (attention, detecting) in [(true, false), (false, true), (true, true)] {
             claude.chromeNeedsAttention = attention

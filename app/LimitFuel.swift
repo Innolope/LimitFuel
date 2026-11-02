@@ -304,6 +304,70 @@ struct GlassIconButton: View {
     }
 }
 
+struct GlassMenuItem {
+    let title: String
+    var enabled = true
+    let action: () -> Void
+}
+
+/// A glass icon button that opens a menu below itself.
+struct GlassMenuButton: View {
+    let symbol: String
+    let help: String
+    let items: [GlassMenuItem]
+    @State private var anchor = GlassMenuAnchor()
+
+    var body: some View {
+        GlassIconButton(symbol: symbol, help: help) { anchor.popUp(items) }
+            .background(GlassMenuAnchorView(anchor: anchor))
+    }
+}
+
+final class GlassMenuAnchor: NSObject {
+    weak var view: NSView?
+    private var actions: [() -> Void] = []
+
+    func menu(for items: [GlassMenuItem]) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        actions = items.map(\.action)
+        for (index, item) in items.enumerated() {
+            let menuItem = NSMenuItem(title: item.title, action: #selector(run(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.tag = index
+            menuItem.isEnabled = item.enabled
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    func popUp(_ items: [GlassMenuItem]) {
+        guard let view = view else { return }
+        // The menu's top-left corner goes just below the button's bottom-left corner.
+        let below = NSPoint(x: 0, y: view.isFlipped ? view.bounds.height + 4 : -4)
+        menu(for: items).popUp(positioning: nil, at: below, in: view)
+    }
+
+    @objc func run(_ sender: NSMenuItem) {
+        guard actions.indices.contains(sender.tag) else { return }
+        actions[sender.tag]()
+    }
+}
+
+private struct GlassMenuAnchorView: NSViewRepresentable {
+    let anchor: GlassMenuAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        anchor.view = nsView
+    }
+}
+
 struct WarningNote: View {
     let text: String
 
@@ -336,6 +400,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var claudeAccounts: ClaudeAccounts!
     var settings: AppSettings!
     var statusManager: StatusManager!
+    var codexStatusManager: StatusManager!
     var updateManager: UpdateManager!
     var codexManager: CodexUsageManager!
     private var claudePollTimers: [String: Timer] = [:]
@@ -378,6 +443,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             settings.loadSettings()
         }
         statusManager = StatusManager()
+        codexStatusManager = StatusManager(source: .codex)
         updateManager = UpdateManager()
         codexManager = CodexUsageManager()
         codexManager.onChange = { [weak self] in
@@ -402,6 +468,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             statusManager: statusManager,
             updateManager: updateManager,
             codexManager: codexManager,
+            codexStatusManager: codexStatusManager,
             popupPresentation: popupPresentation,
             menuBarPreferences: menuBarPreferences
         ))
@@ -433,6 +500,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         claudeAccounts.refreshChromeAccounts()
         codexManager.fetchUsage()
         statusManager.fetch()
+        codexStatusManager.fetch()
         updateManager.fetch()
 
         scheduleClaudePolls()
@@ -440,6 +508,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Provider usage has independent adaptive timers. Status remains once a minute.
         Timer.scheduledTimer(withTimeInterval: RefreshSchedule.usageInterval, repeats: true) { _ in
             self.statusManager.fetch()
+            self.codexStatusManager.fetch()
             self.updateSelectedProviderIcon()
         }
 
@@ -1956,29 +2025,56 @@ private let defaultTrackedComponentIdSet: Set<String> = Set(
     defaultTrackedComponents.map { $0.id }.filter { $0 != "c-claude-gov" }
 )
 
+/// Where a provider's service status comes from.
+struct StatusSource {
+    let name: String
+    let endpoint: URL
+    let pageURL: URL
+    // Prefixes the UserDefaults keys; Claude keeps the keys it had before Codex status.
+    let keyPrefix: String
+    // Codex has no full component list to choose from, so every Codex component is tracked.
+    let tracksAllComponents: Bool
+    let decode: (Data) -> StatusSummary?
+
+    // Canonical URL (status.anthropic.com 302-redirects here)
+    static let claude = StatusSource(name: "Claude",
+                                     endpoint: URL(string: "https://status.claude.com/api/v2/summary.json")!,
+                                     pageURL: URL(string: "https://status.claude.com")!,
+                                     keyPrefix: "", tracksAllComponents: false, decode: StatusManager.decode)
+    // OpenAI's Statuspage-style summary.json omits the Codex group; the incident.io widget API has it.
+    static let codex = StatusSource(name: "Codex",
+                                    endpoint: URL(string: "https://status.openai.com/api/v1/summary")!,
+                                    pageURL: URL(string: "https://status.openai.com")!,
+                                    keyPrefix: "codex_", tracksAllComponents: true, decode: StatusManager.decodeCodex)
+}
+
 class StatusManager: ObservableObject {
     @Published var indicator: String = "none"        // none | minor | major | critical (raw, global)
     @Published var statusDescription: String = "All systems operational"
     @Published var incidents: [StatusIncident] = []
-    @Published var allComponents: [StatusComponent] = defaultTrackedComponents
-    @Published var selectedComponentIds: Set<String> = defaultTrackedComponentIdSet
+    @Published var allComponents: [StatusComponent]
+    @Published var selectedComponentIds: Set<String>
     @Published var lastUpdated: Date?
     @Published var hasFetched: Bool = false
 
-    // Canonical URL (status.anthropic.com 302-redirects here)
-    private let endpoint = URL(string: "https://status.claude.com/api/v2/summary.json")!
+    let source: StatusSource
     private let defaults: UserDefaults
     private let notify: (String, String) -> Void
+    private var lastIndicatorKey: String { source.keyPrefix + "last_effective_indicator" }
 
-    init(defaults: UserDefaults = .standard, notify: @escaping (String, String) -> Void = { title, body in
+    init(source: StatusSource = .claude, defaults: UserDefaults = .standard, notify: @escaping (String, String) -> Void = { title, body in
         let notification = NSUserNotification()
         notification.title = title
         notification.informativeText = body
         notification.soundName = NSUserNotificationDefaultSoundName
         NSUserNotificationCenter.default.deliver(notification)
     }) {
+        self.source = source
         self.defaults = defaults
         self.notify = notify
+        allComponents = source.tracksAllComponents ? [] : defaultTrackedComponents
+        selectedComponentIds = source.tracksAllComponents ? [] : defaultTrackedComponentIdSet
+        guard !source.tracksAllComponents else { return }
         if let saved = defaults.array(forKey: "tracked_component_ids") as? [String] {
             selectedComponentIds = Set(saved)
         }
@@ -1987,6 +2083,7 @@ class StatusManager: ObservableObject {
     }
 
     func toggleComponent(_ id: String) {
+        guard !source.tracksAllComponents else { return }
         if selectedComponentIds.contains(id) {
             selectedComponentIds.remove(id)
         } else {
@@ -1996,7 +2093,7 @@ class StatusManager: ObservableObject {
     }
 
     func isTracked(_ id: String) -> Bool {
-        selectedComponentIds.contains(id)
+        source.tracksAllComponents || selectedComponentIds.contains(id)
     }
 
     // MARK: - Visible views (tracked components, posts at most six hours old)
@@ -2004,7 +2101,7 @@ class StatusManager: ObservableObject {
     private func trackedIncidents() -> [StatusIncident] {
         incidents.filter { incident in
             guard !incident.componentIds.isEmpty else { return true }
-            return incident.componentIds.contains(where: { selectedComponentIds.contains($0) })
+            return incident.componentIds.contains(where: isTracked)
         }
     }
 
@@ -2016,7 +2113,7 @@ class StatusManager: ObservableObject {
         let fresh = Set(visibleIncidents(now: now).flatMap(\.componentIds))
         let expired = Set(incidents.filter { StatusFreshness.isExpired($0.updatedAt, now: now) }.flatMap(\.componentIds))
         return allComponents.filter { component in
-            guard selectedComponentIds.contains(component.id), component.status != "operational" else { return false }
+            guard isTracked(component.id), component.status != "operational" else { return false }
             if fresh.contains(component.id) { return true }
             if let updated = component.updatedAt { return !StatusFreshness.isExpired(updated, now: now) }
             return !expired.contains(component.id)
@@ -2029,14 +2126,18 @@ class StatusManager: ObservableObject {
 
     // The tracked indicator before expiry, used to keep expiry silent.
     private var trackedIndicator: String {
-        indicatorLevel(for: allComponents.filter { selectedComponentIds.contains($0.id) })
+        indicatorLevel(for: allComponents.filter { isTracked($0.id) })
     }
 
     var filteredIncidents: [StatusIncident] { visibleIncidents() }
     var filteredAffectedComponents: [StatusComponent] { visibleAffectedComponents() }
 
     private func indicatorLevel(for components: [StatusComponent]) -> String {
-        switch components.map({ severity(for: $0.status) }).max() ?? 0 {
+        Self.indicator(forSeverity: components.map({ Self.severity(for: $0.status) }).max() ?? 0)
+    }
+
+    private static func indicator(forSeverity severity: Int) -> String {
+        switch severity {
         case 0:  return "none"
         case 1:  return "minor"
         case 2:  return "major"
@@ -2044,7 +2145,7 @@ class StatusManager: ObservableObject {
         }
     }
 
-    private func severity(for componentStatus: String) -> Int {
+    private static func severity(for componentStatus: String) -> Int {
         switch componentStatus {
         case "operational":          return 0
         case "under_maintenance":    return 1
@@ -2056,9 +2157,10 @@ class StatusManager: ObservableObject {
     }
 
     func fetch() {
-        let request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        let request = URLRequest(url: source.endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        let decode = source.decode
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
-            guard let data = data, let summary = Self.decode(data) else { return }
+            guard let data = data, let summary = decode(data) else { return }
             DispatchQueue.main.async { self?.apply(summary) }
         }.resume()
     }
@@ -2106,13 +2208,86 @@ class StatusManager: ObservableObject {
         return StatusSummary(indicator: indicator, description: desc, incidents: incidents, components: components)
     }
 
+    private static func date(_ value: Any?) -> Date? {
+        guard let text = value as? String else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: text) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: text)
+    }
+
+    /// Codex's part of OpenAI's incident.io widget API (`/api/v1/summary`): incidents and running
+    /// maintenance that list a Codex component, with only those components.
+    static func decodeCodex(_ data: Data) -> StatusSummary? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ongoing = json["ongoing_incidents"] as? [[String: Any]] else { return nil }
+        let maintenances = json["in_progress_maintenances"] as? [[String: Any]] ?? []
+        func isCodex(_ component: [String: Any]) -> Bool {
+            (component["group_name"] as? String)?.caseInsensitiveCompare("Codex") == .orderedSame
+                || (component["name"] as? String)?.localizedCaseInsensitiveContains("Codex") == true
+        }
+        // incident.io says full_outage where Statuspage says major_outage.
+        func status(_ raw: Any?) -> String {
+            let value = raw as? String ?? "operational"
+            if value == "full_outage" { return "major_outage" }
+            return ["degraded_performance", "partial_outage", "under_maintenance"].contains(value) ? value : "operational"
+        }
+
+        var incidents: [StatusIncident] = []
+        var components: [StatusComponent] = []
+        for (entry, isMaintenance) in ongoing.map({ ($0, false) }) + maintenances.map({ ($0, true) }) {
+            guard let id = entry["id"] as? String, let name = entry["name"] as? String,
+                  let entryStatus = entry["status"] as? String else { continue }
+            let updatedAt = date(entry["last_update_at"])
+            let affected = (entry["affected_components"] as? [[String: Any]] ?? []).compactMap { raw -> StatusComponent? in
+                guard isCodex(raw), let id = raw["id"] as? String, let name = raw["name"] as? String else { return nil }
+                return StatusComponent(id: id, name: name, status: status(raw["current_status"]), updatedAt: updatedAt)
+            }
+            guard !affected.isEmpty else { continue }
+            incidents.append(StatusIncident(
+                id: id, name: name, status: isMaintenance ? "maintenance" : entryStatus,
+                latestUpdate: entry["last_update_message"] as? String ?? "",
+                updatedAt: updatedAt,
+                componentIds: affected.map(\.id)
+            ))
+            for component in affected {
+                guard let index = components.firstIndex(where: { $0.id == component.id }) else {
+                    components.append(component)
+                    continue
+                }
+                let existing = components[index]
+                let worse = severity(for: component.status) > severity(for: existing.status)
+                let latest = [existing.updatedAt, component.updatedAt].compactMap { $0 }.max()
+                components[index] = StatusComponent(id: existing.id, name: existing.name,
+                                                    status: worse ? component.status : existing.status,
+                                                    updatedAt: latest)
+            }
+        }
+        let worst = components.map { severity(for: $0.status) }.max() ?? 0
+        let worstStatus = components.max { severity(for: $0.status) < severity(for: $1.status) }?.status
+        let description: String
+        switch worst == 0 ? nil : worstStatus {
+        case "degraded_performance": description = "Degraded performance"
+        case "under_maintenance": description = "Under maintenance"
+        case "partial_outage": description = "Partial outage"
+        case "major_outage": description = "Major outage"
+        default: description = "All systems operational"
+        }
+        return StatusSummary(indicator: indicator(forSeverity: worst), description: description,
+                             incidents: incidents, components: components)
+    }
+
     func apply(_ summary: StatusSummary, now: Date = Date()) {
         let isFirstFetch = !hasFetched
 
         indicator = summary.indicator
         statusDescription = summary.description
         incidents = summary.incidents
-        if !summary.components.isEmpty {
+        if source.tracksAllComponents {
+            // The feed lists only affected components; an empty list means they recovered.
+            allComponents = summary.components
+        } else if !summary.components.isEmpty {
             allComponents = summary.components
             // First time we see real components: track all except Claude for Government by default
             if defaults.array(forKey: "tracked_component_ids") == nil {
@@ -2129,20 +2304,20 @@ class StatusManager: ObservableObject {
         // Notify on transitions of the visible indicator. Expiry hides an alert
         // without announcing a recovery the status page has not posted.
         let effective = effectiveIndicator(now: now)
-        let previous = defaults.string(forKey: "last_effective_indicator")
+        let previous = defaults.string(forKey: lastIndicatorKey)
         let expiredOnly = effective == "none" && trackedIndicator != "none"
         if !isFirstFetch, let previous = previous, previous != effective, !expiredOnly {
             notifyStatusChange(to: effective, description: summary.description)
         }
-        defaults.set(effective, forKey: "last_effective_indicator")
+        defaults.set(effective, forKey: lastIndicatorKey)
     }
 
     private func notifyStatusChange(to indicator: String, description: String) {
         guard defaults.bool(forKey: "status_notifications_enabled") else { return }
         if indicator == "none" {
-            notify("Claude is back online", "All systems operational")
+            notify("\(source.name) is back online", "All systems operational")
         } else {
-            notify("Claude status: \(description)", "Visit status.claude.com for details")
+            notify("\(source.name) status: \(description)", "Visit \(source.pageURL.host ?? "the status page") for details")
         }
         NSLog("📬 Sent status-change notification: \(indicator)")
     }
@@ -2531,6 +2706,7 @@ struct UsageView: View {
     @ObservedObject var statusManager: StatusManager
     @ObservedObject var updateManager: UpdateManager
     @ObservedObject var codexManager: CodexUsageManager = CodexUsageManager()
+    @ObservedObject var codexStatusManager: StatusManager = StatusManager(source: .codex)
     @ObservedObject var popupPresentation: PopupPresentation = PopupPresentation()
     @ObservedObject var menuBarPreferences: MenuBarPreferences = MenuBarPreferences()
     // Lets the offline preview renderer capture the Settings page.
@@ -2539,6 +2715,7 @@ struct UsageView: View {
     @State private var showingCookieInput: Bool = false
     @State private var showingSettings: Bool = false
     @State private var showingStatusDetails: Bool = false
+    @State private var showingCodexStatusDetails: Bool = false
     @State private var pendingRemoval: String?
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearance_mode") private var appearanceMode: String = "system"
@@ -2622,10 +2799,21 @@ struct UsageView: View {
                         .controlSize(.small)
                         .scaleEffect(0.7)
                 }
+                GlassMenuButton(symbol: "plus", help: "Add Claude Account", items: [
+                    GlassMenuItem(title: "Sign In to Claude…") {
+                        ClaudeSignInWindowController.show(accounts: claude)
+                    },
+                    GlassMenuItem(title: "Add from Chrome", enabled: !claude.isDetectingChrome) {
+                        openSettings()
+                        claude.detectChromeSessions(interactive: true)
+                    },
+                    GlassMenuItem(title: "Manual Cookie…") {
+                        showingCookieInput = true
+                        openSettings()
+                    },
+                ])
                 GlassIconButton(symbol: "arrow.clockwise", help: "Refresh") { refresh() }
-                GlassIconButton(symbol: "gearshape", help: "Settings") {
-                    withAnimation(.easeInOut(duration: 0.25)) { showingSettings = true }
-                }
+                GlassIconButton(symbol: "gearshape", help: "Settings") { openSettings() }
             }
 
             banners
@@ -2636,7 +2824,7 @@ struct UsageView: View {
             }
             CodexUsageView(manager: codexManager, mode: menuBarPreferences.percentageMode)
 
-            if statusManager.hasFetched {
+            if statusManager.hasFetched || codexStatusManager.hasFetched {
                 serviceStatus
             }
 
@@ -2647,6 +2835,10 @@ struct UsageView: View {
                     .padding(.horizontal, 4)
             }
         }
+    }
+
+    private func openSettings() {
+        withAnimation(.easeInOut(duration: 0.25)) { showingSettings = true }
     }
 
     private var lastUpdated: Date? {
@@ -2660,6 +2852,7 @@ struct UsageView: View {
         claude.accounts.forEach { $0.refreshAllowingKeychainApproval() }
         codexManager.fetchUsage()
         statusManager.fetch()
+        codexStatusManager.fetch()
         updateManager.fetch()
     }
 
@@ -2997,13 +3190,32 @@ struct UsageView: View {
         }
     }
 
-    // Anthropic service status (compact; expandable on issue)
+    // Claude and Codex service status (compact; each row expands on an issue)
     private var serviceStatus: some View {
-        let effective = statusManager.effectiveIndicator(now: Date())
-        let filteredIncidents = statusManager.filteredIncidents
-        let filteredAffected = statusManager.filteredAffectedComponents
-        let hasIssue = effective != "none"
-            && (!filteredIncidents.isEmpty || !filteredAffected.isEmpty)
+        VStack(alignment: .leading, spacing: 10) {
+            if statusManager.hasFetched {
+                statusRow(statusManager, expanded: $showingStatusDetails)
+            }
+            if statusManager.hasFetched && codexStatusManager.hasFetched {
+                Divider().opacity(0.5)
+            }
+            if codexStatusManager.hasFetched {
+                statusRow(codexStatusManager, expanded: $showingCodexStatusDetails)
+            }
+        }
+        .glassCard(tint: hasStatusIssue(statusManager) || hasStatusIssue(codexStatusManager) ? .orange : nil, padding: 12)
+    }
+
+    private func hasStatusIssue(_ sm: StatusManager) -> Bool {
+        sm.hasFetched && sm.effectiveIndicator(now: Date()) != "none"
+            && (!sm.filteredIncidents.isEmpty || !sm.filteredAffectedComponents.isEmpty)
+    }
+
+    private func statusRow(_ sm: StatusManager, expanded: Binding<Bool>) -> some View {
+        let effective = sm.effectiveIndicator(now: Date())
+        let filteredIncidents = sm.filteredIncidents
+        let filteredAffected = sm.filteredAffectedComponents
+        let hasIssue = hasStatusIssue(sm)
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
@@ -3013,12 +3225,12 @@ struct UsageView: View {
                     .shadow(color: statusColor(for: effective).opacity(0.8), radius: 4)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(effective == "none"
-                         ? "Claude services operational"
-                         : statusManager.statusDescription)
+                         ? "\(sm.source.name) services operational"
+                         : "\(sm.source.name): \(sm.statusDescription)")
                         .font(.caption.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     if hasIssue {
-                        Text(statusContextLine(for: statusManager))
+                        Text(statusContextLine(for: sm))
                             .font(.system(size: 10))
                             .foregroundColor(Color.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -3026,10 +3238,10 @@ struct UsageView: View {
                 }
                 Spacer()
                 if hasIssue {
-                    Button(action: { showingStatusDetails.toggle() }) {
+                    Button(action: { expanded.wrappedValue.toggle() }) {
                         HStack(spacing: 2) {
-                            Text(showingStatusDetails ? "Hide" : "Details")
-                            Image(systemName: showingStatusDetails ? "chevron.up" : "chevron.down")
+                            Text(expanded.wrappedValue ? "Hide" : "Details")
+                            Image(systemName: expanded.wrappedValue ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 8))
                         }
                         .font(.caption2)
@@ -3038,7 +3250,7 @@ struct UsageView: View {
                 }
             }
 
-            if hasIssue && showingStatusDetails {
+            if hasIssue && expanded.wrappedValue {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(filteredIncidents) { incident in
                         VStack(alignment: .leading, spacing: 6) {
@@ -3096,14 +3308,14 @@ struct UsageView: View {
                     Divider()
 
                     HStack {
-                        if let lastCheck = statusManager.lastUpdated {
+                        if let lastCheck = sm.lastUpdated {
                             Text("Checked \(relativeTime(lastCheck))")
                                 .font(.caption2)
                                 .foregroundColor(Color.secondaryText)
                         }
                         Spacer()
                         Button(action: {
-                            NSWorkspace.shared.open(URL(string: "https://status.claude.com")!)
+                            NSWorkspace.shared.open(sm.source.pageURL)
                         }) {
                             Text("Open status page →")
                                 .font(.caption2)
@@ -3114,7 +3326,6 @@ struct UsageView: View {
                 .padding(.top, 4)
             }
         }
-        .glassCard(tint: hasIssue ? .orange : nil, padding: 12)
     }
 
     // MARK: Settings
@@ -3495,7 +3706,7 @@ struct UsageView: View {
     }
 
     func statusContextLine(for sm: StatusManager) -> String {
-        let tracked = sm.allComponents.filter { sm.selectedComponentIds.contains($0.id) }
+        let tracked = sm.allComponents.filter { sm.isTracked($0.id) }
         let trackedNames = tracked.prefix(4).map { shortName($0.name) }.joined(separator: ", ")
         let extra = tracked.count > 4 ? " +\(tracked.count - 4)" : ""
         let trackedSummary = tracked.isEmpty ? "No services tracked" : "Tracks \(trackedNames)\(extra)"

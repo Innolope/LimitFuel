@@ -38,6 +38,8 @@ A lightweight macOS menu bar app that displays your Claude.ai session and weekly
 - Session (5-hour) usage with progress bar and reset time
 - Weekly (7-day) usage with progress bar and reset date
 - Weekly Sonnet usage (Pro plan only)
+- **+** to add a Claude account: sign in, add from Chrome, or paste a cookie
+- Claude and Codex service status, with details during an incident
 - Settings for notifications and keyboard shortcuts
 
 ## 📋 Requirements
@@ -88,7 +90,8 @@ Again**; signing in as the same Claude user renews that account in place.
 Settings > Claude accounts lists every tracked account by its claude.ai email.
 **Sign In…** adds an account signed in inside LimitFuel, **Add from Chrome** adds
 another signed-in Chrome profile, **Manual Cookie** adds an account from any
-browser, and the trash button removes one. Chrome keeps
+browser, and the trash button removes one. The **+** button in the popup offers
+the same three ways to add an account. Chrome keeps
 one claude.ai sign-in per profile. Signing in to another account in a profile adds
 that account; the earlier one keeps its saved session but can no longer renew it from
 that profile. For accounts to keep renewing from Chrome, sign each in to its own Chrome
@@ -265,7 +268,9 @@ while a five-hour window is above 90%. At a known reset, or when usage drops to
 90% or below, polling returns to one minute. Status checks remain every minute
 and Chrome cookie import remains hourly. Smart alerts share the usage notification
 setting, with Codex deduplication scoped to its account, bucket and quota window.
-Service status alerts disappear once their latest post is more than six hours old.
+Claude status comes from status.claude.com; Codex status from the Codex components
+on status.openai.com (its incident.io widget API). Both are checked every minute, share
+the Status Alerts switch, and disappear once their latest post is more than six hours old.
 
 Installations upgraded with a saved cookie keep using it as their first account,
 with the same Chrome or manual mode as before.

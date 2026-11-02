@@ -22,9 +22,9 @@ Original project: [Artzainnn/ClaudeUsageBar](https://github.com/Artzainnn/Claude
 2. Already signed in to claude.ai in Google Chrome? The app picks up that session
    automatically, or click **Detect Chrome Session** and allow access to
    "Chrome Safe Storage" when macOS asks.
-3. Add more Claude accounts any time in Settings: sign in to each one, add them from
-   Chrome, or paste a manual cookie.
-5. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
+3. Add more Claude accounts any time with **+** in the popup: sign in to each one,
+   add them from Chrome, or paste a manual cookie.
+4. For Codex, the app uses your existing Codex CLI sign-in (`codex login` with
    ChatGPT if needed); its limits appear below Claude's. See [Codex setup](#codex-setup).
 
 Usage refreshes every minute and Chrome cookies recheck hourly. Each in-app sign-in
@@ -43,6 +43,7 @@ for other browsers.
 - ⚡ **Auto-refresh** - Updates every minute, or every 12 seconds above 90% five-hour usage until reset
 - 🤖 **Codex tracking** - Claude and Codex limits side by side, with per-bucket limits and reset times from your existing Codex sign-in
 - 👥 **Several Claude accounts** - Each account shows its email in the popup and its own percentage in the menu bar
+- 🚦 **Service status** - Claude and Codex outages from status.claude.com and status.openai.com, with optional alerts
 - 🔒 **Privacy-first** - Session cookies in your macOS Keychain and read-only provider access, with a Settings opt-out for diagnostics
 - 📊 **Pro plan support** - Shows weekly Sonnet usage for Pro subscribers
 - 🩺 **Crash and error reporting** - Sentry reporting is on by default, with an off switch in Settings; see [diagnostics and privacy](docs/diagnostics.md)
@@ -83,6 +84,8 @@ age; Increase Contrast or Reduce Transparency keeps the numbers sharp.
 - Session (5-hour) usage with progress bar
 - Weekly (7-day) usage with progress bar
 - Weekly Sonnet usage (Pro plan only)
+- **+** to add a Claude account without opening Settings
+- Claude and Codex service status, with details during an incident
 - Settings for notifications and shortcuts
 
 ## 📁 Repository Structure
