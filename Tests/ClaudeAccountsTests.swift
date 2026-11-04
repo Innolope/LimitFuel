@@ -617,7 +617,7 @@ private final class ChromeGate {
 
     // An account refreshes from its profile only while that profile holds the same Claude user.
     static func pinnedProfileSwitchedUser(_ base: URL) throws {
-        for sameUser in [true, false] {
+        for (sameUser, signedOut) in [(true, false), (false, false), (false, true)] {
             try withFixture(base) { f in
                 f.seed("owner", header: cookie("mine"), sync: true, profile: "Default")
                 f.defaults.set(identityUUID, forKey: key("owner", "account_uuid"))
@@ -625,6 +625,13 @@ private final class ChromeGate {
                 f.server.expect(.identity, cookie("theirs"), Reply(data: identity(uuid: sameUser ? identityUUID.lowercased() : otherUser)))
                 if sameUser { f.server.fetch(cookie("theirs")) }
                 let accounts = f.load(), owner = accounts.accounts[0]
+                if signedOut {
+                    // claude.ai has already ended this account's own session.
+                    f.server.expect(.usage, cookie("mine"), Reply(status: 403))
+                    owner.fetchUsage()
+                    wait("own session refused") { owner.needsSignIn && !owner.isLoading }
+                    check(owner.errorMessage == ClaudeUsageProblem.signedOut, "a refused session reads as signed out")
+                }
                 owner.detectChromeSession()
                 if sameUser {
                     wait("same user's new session adopted") {
@@ -640,6 +647,12 @@ private final class ChromeGate {
                           "the account keeps its identity")
                     check(owner.chromeMessage?.contains("different Claude account") == true,
                           "the account explains the profile switched users")
+                    if signedOut {
+                        check(owner.connectionHint.contains("can't renew from it") && !owner.connectionHint.contains("keeps its saved session"),
+                              "a signed-out account is not told it keeps its session")
+                    } else {
+                        check(owner.chromeMessage?.contains("keeps its saved session") == true, "a working account keeps its session")
+                    }
                 }
             }
         }
